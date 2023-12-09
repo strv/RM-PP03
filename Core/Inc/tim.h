@@ -29,7 +29,8 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Private defines */
@@ -39,7 +40,19 @@ extern "C" {
 void MX_TIM1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+typedef enum {
+  PWM_DIR_FWD,
+  PWM_DIR_REV,
+  PWM_DIR_IDLE
+}PWM_DIR;
 
+void pwm_init(void);
+void pwm_set_constant_light_rate(const uint16_t rate_cl);
+void pwm_set_supoerimpose_amplitude(const uint16_t rate_superimpose);
+void pwm_set_rate(const uint16_t rate, const PWM_DIR dir);
+void pwm_set_superimpose_freq(const int freq);
+void pwm_set_superimpose_rate(const uint16_t rate);
+void pwm_cb();
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

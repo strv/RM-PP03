@@ -22,6 +22,7 @@
 #include "stm32g0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "tim.h"
 #include "usart.h"
 /* USER CODE END Includes */
 
@@ -179,7 +180,11 @@ void DMA1_Channel2_3_IRQHandler(void)
 void TIM1_BRK_UP_TRG_COM_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_BRK_UP_TRG_COM_IRQn 0 */
-
+  if (LL_TIM_IsActiveFlag_UPDATE(TIM1))
+  {
+    pwm_cb();
+    LL_TIM_ClearFlag_UPDATE(TIM1);
+  }
   /* USER CODE END TIM1_BRK_UP_TRG_COM_IRQn 0 */
   /* USER CODE BEGIN TIM1_BRK_UP_TRG_COM_IRQn 1 */
 

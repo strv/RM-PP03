@@ -21,7 +21,98 @@
 #include "tim.h"
 
 /* USER CODE BEGIN 0 */
+static PWM_DIR dir_ = 0;
+static uint32_t oc_high_ = 0;
+static uint32_t oc_low_ = 0;
+static uint32_t oc_cl_ = 0;
+static uint32_t oc_si_ = 0;
+static uint32_t superimpose_cycle_ = 0;
+static uint32_t superimpose_cnt_ = 0;
+static uint32_t superimpose_compare_ = 0;
 
+void pwm_init(void)
+{
+  LL_TIM_ClearFlag_UPDATE(TIM1);
+  LL_TIM_EnableAllOutputs(TIM1);
+  LL_TIM_EnableIT_UPDATE(TIM1);
+  LL_TIM_EnableCounter(TIM1);
+}
+
+void pwm_set_constant_light_rate(const uint16_t rate_cl)
+{
+  oc_cl_ = rate_cl * PWM_CYCLE / UINT16_MAX;
+}
+
+void pwm_set_supoerimpose_amplitude(const uint16_t rate_superimpose)
+{
+  oc_si_ = (rate_superimpose > UINT16_MAX/2 ? UINT16_MAX/2 : rate_superimpose) * (PWM_CYCLE - oc_cl_) / UINT16_MAX;
+}
+
+void pwm_set_rate(const uint16_t rate, const PWM_DIR dir)
+{
+  int32_t high, low;
+  high = rate * (PWM_CYCLE - oc_cl_) / UINT16_MAX + oc_cl_ + oc_si_ / 2;
+  low = high - oc_si_;
+
+  if (low < oc_cl_)
+  {
+    high += oc_cl_ - low;
+    low = oc_cl_;
+  }
+  if (high > PWM_CYCLE)
+  {
+    low += high - PWM_CYCLE;
+    high = PWM_CYCLE;
+  }
+
+  // critical section
+  LL_TIM_DisableIT_UPDATE(TIM1);
+  dir_ = dir;
+  oc_low_ = low;
+  oc_high_ = high;
+  LL_TIM_EnableIT_UPDATE(TIM1);
+}
+
+void pwm_set_superimpose_freq(const int freq)
+{
+  if (freq != 0)
+    superimpose_cycle_ = PWM_HZ / freq;
+  else
+    superimpose_cycle_ = 0;
+}
+
+void pwm_set_superimpose_rate(const uint16_t rate)
+{
+  superimpose_compare_ = superimpose_cycle_ * rate / UINT16_MAX;
+}
+
+void pwm_cb()
+{
+  ++superimpose_cnt_;
+  if (superimpose_cnt_ == superimpose_compare_)
+  {
+    LL_TIM_OC_SetCompareCH1(TIM1, oc_high_);
+  }
+  else if (superimpose_cnt_ >= superimpose_cycle_)
+  {
+    superimpose_cnt_ = 0;
+    LL_TIM_OC_SetCompareCH1(TIM1, oc_low_);
+    if (dir_ == PWM_DIR_FWD)
+    {
+      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
+      LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
+    }
+    else if (dir_ == PWM_DIR_REV)
+    {
+      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
+      LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1);
+    }
+    else
+    {
+      LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N);
+    }
+  }
+}
 /* USER CODE END 0 */
 
 /* TIM1 init function */
