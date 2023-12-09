@@ -21,7 +21,72 @@
 #include "usart.h"
 
 /* USER CODE BEGIN 0 */
+#define USART_RX_BUF_LEN (128)
+#define USART_TX_BUF_LEN (128)
 
+const static int USART_RX_BUF_MASK = USART_RX_BUF_LEN - 1;
+
+static uint8_t rx_buf1_[USART_RX_BUF_LEN];
+static uint8_t tx_buf1_[USART_TX_BUF_LEN];
+static bool tx_ongoing1_ = false;
+static int rx_buf1_ri_ = 0;
+static int rx_buf1_wi_ = 0;
+
+void usart_init()
+{
+  LL_USART_ClearFlag_UDR(USART1);
+  LL_USART_ClearFlag_TC(USART1);
+  LL_USART_EnableIT_RXNE(USART1);
+  LL_USART_EnableDirectionRx(USART1);
+  LL_USART_EnableDirectionTx(USART1);
+
+  LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_3,
+    (uint32_t)LL_USART_DMA_GetRegAddr(USART1, LL_USART_DMA_REG_DATA_TRANSMIT));
+  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_3,
+    (uint32_t)tx_buf1_);
+  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_3);
+
+  LL_USART_Enable(USART1);
+
+  xdev_in(usart1_getc);
+}
+
+void usart1_rx_cb()
+{
+  rx_buf1_[rx_buf1_wi_++] = LL_USART_ReceiveData8(USART1);
+  rx_buf1_wi_ &= USART_RX_BUF_MASK;
+  if (rx_buf1_wi_ == rx_buf1_ri_) rx_buf1_ri_++;
+}
+
+void usart1_tx_dma_cb()
+{
+  tx_ongoing1_ = false;
+}
+
+int usart1_puts(const uint8_t const * pbuf, const int length)
+{
+  int cnt = length;
+  assert(length != 0);
+  if (!tx_ongoing1_)
+    return 0;
+  do {
+    tx_buf1_[cnt] = pbuf[cnt];
+  }while(--cnt);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_3, length);
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_3);
+  tx_ongoing1_ = true;
+  return cnt;
+}
+
+int usart1_getc()
+{
+  int c;
+  if (rx_buf1_ri_ == rx_buf1_wi_)
+    return 0;
+  c = rx_buf1_[rx_buf1_ri_++];
+  rx_buf1_ri_ &= USART_RX_BUF_MASK;
+  return c;
+}
 /* USER CODE END 0 */
 
 /* USART1 init function */

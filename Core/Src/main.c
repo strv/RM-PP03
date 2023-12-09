@@ -119,6 +119,7 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   LL_SYSTICK_EnableIT();
+  usart_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
