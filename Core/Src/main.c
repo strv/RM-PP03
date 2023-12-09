@@ -26,7 +26,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,7 +54,25 @@ uint64_t ms = 0;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+bool sw_emo_is_pressed()
+{
+  return LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_14) > 0 ? false : true;
+}
 
+int sw_mode()
+{
+  return LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_15) > 0 ? 1 : 0;
+}
+
+void led_on()
+{
+  LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_6);
+}
+
+void led_off()
+{
+  LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6);
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
