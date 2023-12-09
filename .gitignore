@@ -1,3 +1,14 @@
+# IDE related files
+*.cproject
+*.json
+*.ld
+*.mxproject
+*.project
+*.vs
+*.vscode
+cmake
+CMake*
+
 # Prerequisites
 *.d
 
