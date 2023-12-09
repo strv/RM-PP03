@@ -6,8 +6,10 @@
 *.project
 *.vs
 *.vscode
+build
 cmake
 CMake*
+Drivers
 
 # Prerequisites
 *.d
