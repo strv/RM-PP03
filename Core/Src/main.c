@@ -121,6 +121,7 @@ int main(void)
   LL_SYSTICK_EnableIT();
   usart_init();
   pwm_init();
+  adc_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */

@@ -39,7 +39,19 @@ extern "C" {
 void MX_ADC1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+typedef enum
+{
+  ADC_CH_VM,
+  ADC_CH_CUR,
+  ADC_CH_AUX0,
+  ADC_CH_AUX1,
+  ADC_CH_VREF,
+  ADC_CH_NUM
+}ADC_CH;
+void adc_init();
+void adc_dma_cb();
+int adc_get_vm();
+int adc_get_cur();
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

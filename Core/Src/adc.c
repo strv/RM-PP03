@@ -21,7 +21,69 @@
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
+#define ADC_SUM_Q   (4)
+#define ADC_SUM_NUM (1 << ADC_SUM_Q)
+#define ADC_BUF_LEN (ADC_CH_NUM * ADC_SUM_NUM)
 
+const static int adc_vref_mv = 1212;
+
+static uint32_t adc_results[ADC_BUF_LEN];
+static int adc_ref_raw = 0;
+
+int adc_get_raw(const int ch);
+
+void adc_init()
+{
+  LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
+  LL_ADC_Disable(ADC1);
+  LL_ADC_REG_SetDMATransfer(ADC1, LL_ADC_REG_DMA_TRANSFER_NONE);
+  LL_ADC_StartCalibration(ADC1);
+  while(LL_ADC_IsCalibrationOnGoing(ADC1));
+  LL_ADC_ClearFlag_ADRDY(ADC1);
+  LL_mDelay(1);
+  LL_ADC_Enable(ADC1);
+  LL_mDelay(1);
+
+  LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_1,
+    (uint32_t)LL_ADC_DMA_GetRegAddr(ADC1, LL_ADC_DMA_REG_REGULAR_DATA));
+  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_1, (uint32_t)adc_results);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_1, ADC_BUF_LEN);
+  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
+
+  LL_ADC_REG_StartConversion(ADC1);
+}
+
+void adc_dma_cb()
+{
+  adc_ref_raw = adc_get_raw(5);
+}
+
+int adc_get_vm()
+{
+  if (adc_ref_raw == 0)
+    return 0;
+  // 110k / 10k -> ADC
+  return adc_get_raw(0) * adc_vref_mv * 11 / adc_ref_raw;
+}
+
+int adc_get_cur()
+{
+  if (adc_ref_raw == 0)
+    return 0;
+  // 0.02 ohm * 51
+  return adc_get_raw(1) * adc_vref_mv * 50 / (adc_ref_raw * 51);
+}
+
+int adc_get_raw(const int ch)
+{
+  int res = 0;
+  for (int i = 0; i < ADC_CH_NUM; ++i)
+  {
+    res += adc_results[i * ADC_CH_NUM + ch];
+  }
+  return res >> ADC_SUM_Q;
+}
 /* USER CODE END 0 */
 
 /* ADC1 init function */
@@ -100,7 +162,7 @@ void MX_ADC1_Init(void)
 
   ADC_InitStruct.Clock = LL_ADC_CLOCK_SYNC_PCLK_DIV2;
   ADC_InitStruct.Resolution = LL_ADC_RESOLUTION_12B;
-  ADC_InitStruct.DataAlignment = LL_ADC_DATA_ALIGN_RIGHT;
+  ADC_InitStruct.DataAlignment = LL_ADC_DATA_ALIGN_LEFT;
   ADC_InitStruct.LowPowerMode = LL_ADC_LP_MODE_NONE;
   LL_ADC_Init(ADC1, &ADC_InitStruct);
   LL_ADC_REG_SetSequencerConfigurable(ADC1, LL_ADC_REG_SEQ_CONFIGURABLE);
