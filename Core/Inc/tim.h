@@ -41,9 +41,9 @@ void MX_TIM1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 typedef enum {
-  PWM_DIR_FWD,
-  PWM_DIR_REV,
-  PWM_DIR_IDLE
+  PWM_DIR_REV = -1,
+  PWM_DIR_IDLE = 0,
+  PWM_DIR_FWD = 1
 }PWM_DIR;
 
 void pwm_init(void);
@@ -52,6 +52,8 @@ void pwm_set_supoerimpose_amplitude(const uint16_t rate_superimpose);
 void pwm_set_rate(const uint16_t rate, const PWM_DIR dir);
 void pwm_set_superimpose_freq(const int freq);
 void pwm_set_superimpose_rate(const uint16_t rate);
+void pwm_disable_output();
+void pwm_enable_output();
 void pwm_cb();
 /* USER CODE END Prototypes */
 

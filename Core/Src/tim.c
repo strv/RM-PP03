@@ -29,6 +29,7 @@ static uint32_t oc_si_ = 0;
 static uint32_t superimpose_cycle_ = 0;
 static uint32_t superimpose_cnt_ = 0;
 static uint32_t superimpose_compare_ = 0;
+static bool enabled_ = true;
 
 void pwm_init(void)
 {
@@ -86,6 +87,16 @@ void pwm_set_superimpose_rate(const uint16_t rate)
   superimpose_compare_ = superimpose_cycle_ * rate / UINT16_MAX;
 }
 
+void pwm_disable_output()
+{
+  enabled_ = false;
+}
+
+void pwm_enable_output()
+{
+  enabled_ = true;
+}
+
 void pwm_cb()
 {
   ++superimpose_cnt_;
@@ -97,7 +108,12 @@ void pwm_cb()
   {
     superimpose_cnt_ = 0;
     LL_TIM_OC_SetCompareCH1(TIM1, oc_low_);
-    if (dir_ == PWM_DIR_FWD)
+
+    if (enabled_ == false || dir_ == PWM_DIR_IDLE)
+    {
+      LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N);
+    }
+    else if (dir_ == PWM_DIR_FWD)
     {
       LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
       LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
@@ -106,10 +122,6 @@ void pwm_cb()
     {
       LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
       LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1);
-    }
-    else
-    {
-      LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N);
     }
   }
 }
