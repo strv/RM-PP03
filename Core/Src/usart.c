@@ -31,6 +31,7 @@ static uint8_t tx_buf1_[USART_TX_BUF_LEN];
 static bool tx_ongoing1_ = false;
 static int rx_buf1_ri_ = 0;
 static int rx_buf1_wi_ = 0;
+static int rx_line_cnt_ = 0;
 
 void usart_init()
 {
@@ -53,8 +54,9 @@ void usart_init()
 
 void usart1_rx_cb()
 {
-  rx_buf1_[rx_buf1_wi_++] = LL_USART_ReceiveData8(USART1);
-  rx_buf1_wi_ &= USART_RX_BUF_MASK;
+  rx_buf1_[rx_buf1_wi_] = LL_USART_ReceiveData8(USART1);
+  if (rx_buf1_[rx_buf1_wi_] == '\n') rx_line_cnt_++;
+  rx_buf1_wi_ = (rx_buf1_wi_ + 1) & USART_RX_BUF_MASK;
   if (rx_buf1_wi_ == rx_buf1_ri_) rx_buf1_ri_++;
 }
 
@@ -63,16 +65,18 @@ void usart1_tx_dma_cb()
   tx_ongoing1_ = false;
 }
 
-int usart1_puts(const uint8_t const * pbuf, const int length)
+int usart1_puts(const uint8_t const * pbuf)
 {
-  int cnt = length;
-  assert(length != 0);
+  int cnt = 0;
+  assert(pbuf[0] != 0);
   if (!tx_ongoing1_)
     return 0;
   do {
     tx_buf1_[cnt] = pbuf[cnt];
-  }while(--cnt);
-  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_3, length);
+    cnt++;
+    if (cnt == USART_TX_BUF_LEN) return 0;
+  }while(pbuf[cnt]);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_3, cnt);
   LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_3);
   tx_ongoing1_ = true;
   return cnt;
@@ -85,7 +89,20 @@ int usart1_getc()
     return 0;
   c = rx_buf1_[rx_buf1_ri_++];
   rx_buf1_ri_ &= USART_RX_BUF_MASK;
+  if (c == '\n') rx_line_cnt_--;
   return c;
+}
+
+int usart1_gets(char* pbuf)
+{
+  int cnt = 0;
+  if (rx_line_cnt_ == 0) return 0;
+  do
+  {
+    pbuf[cnt] = usart1_getc();
+  } while (pbuf[cnt++] != '\n');
+  pbuf[cnt++] = '\0';
+  return cnt;
 }
 /* USER CODE END 0 */
 

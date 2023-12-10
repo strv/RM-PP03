@@ -46,8 +46,10 @@ void MX_USART2_UART_Init(void);
 void usart_init();
 void usart1_rx_cb();
 void usart1_tx_dma_cb();
-int usart1_puts(const uint8_t const * pbuf, const int length);
+int usart1_rx_line();
+int usart1_puts(const uint8_t const * pbuf);
 int usart1_getc();
+int usart1_gets(char* pbuf);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
