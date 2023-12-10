@@ -28,16 +28,29 @@
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum
+{
+  STATE_STARTUP,
+  STATE_NORMAL,
+  STATE_EMO,
+}STATE;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+const static uint64_t ReportIntervalDefault = 100;
+const static uint64_t EmoResetDuration = 5000;
+const static char* NmeaPrefix = "$SSPP03";
+const static uint64_t LedProcInterval = 125;
+const static int LedPhaseMax = 8;
+const static bool LedPatternStartup[] = {false, false, false, false, false, false, false, false};
+const static bool LedPatternNormal[] = {false, false, false, false, true, true, true, true};
+const static bool LedPatternEmo[] = {false, true, false, true, false, true, false, true};
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,11 +62,23 @@
 
 /* USER CODE BEGIN PV */
 uint64_t ms = 0;
+static uint64_t report_interval_ms_ = ReportIntervalDefault;
+static uint64_t report_ms_prev_ = 0;
+static uint64_t led_proc_ms_prev_ = 0;
+static int led_phase_ = 0;
+static STATE state = STATE_STARTUP;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+char itoh(const int i)
+{
+  if (i > 0xF) return 0;
+  if (i > 9) return i - 10 + 'A';
+  return i + '0';
+}
+
 bool sw_emo_is_pressed()
 {
   return LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_14) > 0 ? false : true;
@@ -73,6 +98,60 @@ void led_off()
 {
   LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6);
 }
+
+// return size of packet
+int nmea0183_add_suffix(char* buf)
+{
+  uint8_t sum = 0;
+  int cnt = 0;
+  if (buf[cnt++] != '$') return 0;
+  do {
+    sum ^= buf[cnt++];
+    if (buf[cnt] == '\n' || buf[cnt] == '\0') return 0;
+  } while (buf[cnt] != '*');
+  buf[++cnt] = itoh((sum >> 4) & 0xF);
+  buf[++cnt] = itoh((sum >> 0) & 0xF);
+  buf[++cnt] = '\r';
+  buf[++cnt] = '\n';
+  buf[++cnt] = '\0';
+  return cnt;
+}
+
+// return 1 : OK
+//        0 : NG
+int nmea0183_pop_word(char* dst, char** const src, const char delim)
+{
+  // copy characters until delimiter
+  while (**src != '\0')  // EOL
+  {
+    if (**src == delim) // delimiter
+    {
+      (*src)++; // skip delimiter
+      *dst = '\0';
+      return 1;
+    }
+    *dst++ = *(*src)++;
+  }
+  return 0;
+}
+
+// return 1 : OK
+//        0 : NG
+int nmea0183_check_sum(const char* buf)
+{
+  uint8_t sum = 0;
+  if (*buf++ != '$') return 0;
+  do {
+    sum ^= *buf++;
+    if (*buf == '\n' || *buf == '\0') return 0;
+  } while (*buf != '*');
+  if (*(++buf) != itoh((sum >> 4) & 0xF))
+    return 0;
+  if (*(++buf) != itoh((sum >> 0) & 0xF))
+    return 0;
+  return 1;
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -87,7 +166,16 @@ void led_off()
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+  char buf_rep[128];
+  char buf_cmd[128];
+  char buf_word[16];
+  int rep_offset = 0;
+  int vm_mv = 0;
+  int cur_ma = 0;
+  int mode = 0;
+  bool sw_emo_pressed = false;
+  uint64_t sw_emo_press_ms = 0;
+  bool* led_pattern = LedPatternStartup;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -126,11 +214,175 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  led_pattern = LedPatternNormal;
+  state = STATE_NORMAL;
   while (1)
   {
+    vm_mv = adc_get_vm();
+    cur_ma = adc_get_cur();
+    mode = sw_mode();
+    bool sw_emo = sw_emo_is_pressed();
+    if (sw_emo && !sw_emo_pressed)
+    {
+      // change state not pressed to pressed
+      sw_emo_pressed = true;
+
+      if (state == STATE_EMO)
+      {
+        // if already emergency stopped,
+        // emo press is for release
+        sw_emo_press_ms = ms;
+      }
+      else
+      {
+        // trigger emergency stop
+        pwm_disable_output();
+        led_pattern = LedPatternEmo;
+        state = STATE_EMO;
+      }
+    }
+    else if (state == STATE_EMO && sw_emo && ms - sw_emo_press_ms >= EmoResetDuration)
+    {
+      // enough time elapsed from switch pressed
+      pwm_set_rate(0, PWM_DIR_IDLE);
+      pwm_enable_output();
+      led_pattern = LedPatternNormal;
+      state = STATE_NORMAL;
+    }
+    else if (!sw_emo)
+    {
+      sw_emo_press_ms = 0;
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    while(usart1_gets(buf_cmd))
+    {
+      long cmd_id;
+      char* parse_point;
+      char* work_point;
+
+      // skip until leader character
+      if (*buf_cmd != '$')
+        continue;
+
+      // test check sum
+      if (nmea0183_check_sum(buf_cmd) == 0)
+        continue;
+
+      // check prefix
+      parse_point = buf_cmd;
+      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
+        continue;
+      if (strncmp(buf_word, NmeaPrefix, 7))
+        continue;
+
+      // read device id
+      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
+        continue;
+      work_point = buf_word;
+      if(xatoi(&work_point, &cmd_id) == 0)
+        continue;
+      if (cmd_id != 1)
+      {
+        // TODO
+        // transfer to follower device
+        continue;
+      }
+
+      // parse sub command
+      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
+        continue;
+      if (strncmp(buf_word, "CMDSLT", 6) == 0)
+      {
+        // Set thlottle value command
+        // $SSPP03,id,CMDSLT,d,t*cc
+        // d : direction
+        //      1 : fwd
+        //      0 : idle
+        //      -1 : rev
+        // t : thlottle
+        //      0 to 65535
+        long dir = 0;
+        long thlottle = 0;
+        if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
+          continue;
+        work_point = buf_word;
+        if(xatoi(&work_point, &dir) == 0)
+          continue;
+        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
+          continue;
+        work_point = buf_word;
+        if(xatoi(&work_point, &thlottle) == 0)
+          continue;
+        pwm_set_rate(thlottle, dir);
+      }
+      else if (strncmp(buf_word, "CMDCLT", 6) == 0)
+      {
+        // Set constant light value command
+        // $SSPP03,id,CMDCLT,r*cc
+        long rate = 0;
+        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
+          continue;
+        work_point = buf_word;
+        if(xatoi(&work_point, &rate) == 0)
+          continue;
+        pwm_set_constant_light_rate(rate);
+      }
+      else if (strncmp(buf_word, "CMDSIR", 6) == 0)
+      {
+        // Set superimpose rate value command
+        // $SSPP03,id,CMDSIR,r*cc
+        long rate = 0;
+        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
+          continue;
+        work_point = buf_word;
+        if(xatoi(&work_point, &rate) == 0)
+          continue;
+        pwm_set_superimpose_rate(rate);
+      }
+      else if (strncmp(buf_word, "CMDRST", 6) == 0)
+      {
+        // Reset emergency stop state
+        // $SSPP03,id,CMDRST*cc
+        if (state == STATE_EMO)
+        {
+          pwm_set_rate(0, PWM_DIR_IDLE);
+          pwm_enable_output();
+          led_pattern = LedPatternNormal;
+          state = STATE_NORMAL;
+        }
+      }
+      else if (strncmp(buf_word, "CMDEMO", 6) == 0)
+      {
+        // Enter to emergency stop state
+        pwm_disable_output();
+        led_pattern = LedPatternEmo;
+        state = STATE_EMO;
+      }
+    }
+
+    if (ms - report_ms_prev_ >= report_interval_ms_)
+    {
+      report_ms_prev_ += report_interval_ms_;
+      rep_offset = 0;
+      xsprintf(buf_rep, "%s,1,REPPWR,%d,%d*", NmeaPrefix, vm_mv, cur_ma);
+      rep_offset += nmea0183_add_suffix(buf_rep);
+      xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, sw_emo_pressed ? 1 : 0, mode, state);
+      rep_offset += nmea0183_add_suffix(buf_rep);
+      usart1_puts(buf_rep);
+    }
+
+    if (ms - led_proc_ms_prev_ >= LedProcInterval)
+    {
+      led_proc_ms_prev_ += LedProcInterval;
+      if (led_pattern[led_phase_++])
+        led_on();
+      else
+        led_off();
+      if (led_phase_ == LedPhaseMax)
+        led_phase_ = 0;
+    }
   }
   /* USER CODE END 3 */
 }
