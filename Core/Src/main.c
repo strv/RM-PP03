@@ -175,7 +175,7 @@ int main(void)
   int mode = 0;
   bool sw_emo_pressed = false;
   uint64_t sw_emo_press_ms = 0;
-  bool* led_pattern = LedPatternStartup;
+  const bool* led_pattern = LedPatternStartup;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
