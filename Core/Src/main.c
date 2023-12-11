@@ -256,7 +256,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    while(usart1_gets(buf_cmd))
+    while(usart2_gets(buf_cmd))
     {
       long cmd_id;
       char* parse_point;
@@ -370,7 +370,7 @@ int main(void)
       rep_offset += nmea0183_add_suffix(buf_rep);
       xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, sw_emo_pressed ? 1 : 0, mode, state);
       rep_offset += nmea0183_add_suffix(buf_rep);
-      usart1_puts(buf_rep);
+      usart2_puts(buf_rep);
     }
 
     if (ms - led_proc_ms_prev_ >= LedProcInterval)

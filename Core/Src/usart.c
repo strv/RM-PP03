@@ -26,80 +26,83 @@
 
 const static int USART_RX_BUF_MASK = USART_RX_BUF_LEN - 1;
 
-static uint8_t rx_buf1_[USART_RX_BUF_LEN];
-static uint8_t tx_buf1_[USART_TX_BUF_LEN];
-static bool tx_ongoing1_ = false;
-static int rx_buf1_ri_ = 0;
-static int rx_buf1_wi_ = 0;
-static int rx_line_cnt_ = 0;
+static uint8_t rx2_buf_[USART_RX_BUF_LEN];
+static uint8_t tx2_buf_[USART_TX_BUF_LEN];
+static bool tx2_ongoing_ = false;
+static int rx2_buf_ri_ = 0;
+static int rx2_buf_wi_ = 0;
+static int rx2_line_cnt_ = 0;
 
 void usart_init()
 {
-  LL_USART_ClearFlag_UDR(USART1);
-  LL_USART_ClearFlag_TC(USART1);
-  LL_USART_EnableIT_RXNE(USART1);
-  LL_USART_EnableDirectionRx(USART1);
-  LL_USART_EnableDirectionTx(USART1);
+  LL_USART_ClearFlag_UDR(USART2);
+  LL_USART_ClearFlag_TC(USART2);
+  LL_USART_EnableIT_RXNE(USART2);
+  LL_USART_EnableDirectionRx(USART2);
+  LL_USART_EnableDirectionTx(USART2);
+  LL_USART_EnableDMAReq_TX(USART2);
 
-  LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_3,
-    (uint32_t)LL_USART_DMA_GetRegAddr(USART1, LL_USART_DMA_REG_DATA_TRANSMIT));
-  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_3,
-    (uint32_t)tx_buf1_);
-  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_3);
+  LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_2);
+  LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_2,
+    (uint32_t)LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_TRANSMIT));
+  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_2,
+    (uint32_t)tx2_buf_);
+  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_2);
 
-  LL_USART_Enable(USART1);
+  LL_USART_Enable(USART2);
 
-  xdev_in(usart1_getc);
+  xdev_in(usart2_getc);
 }
 
-void usart1_rx_cb()
+void usart2_rx_cb()
 {
-  rx_buf1_[rx_buf1_wi_] = LL_USART_ReceiveData8(USART1);
-  if (rx_buf1_[rx_buf1_wi_] == '\n') rx_line_cnt_++;
-  rx_buf1_wi_ = (rx_buf1_wi_ + 1) & USART_RX_BUF_MASK;
-  if (rx_buf1_wi_ == rx_buf1_ri_) rx_buf1_ri_++;
+  rx2_buf_[rx2_buf_wi_] = LL_USART_ReceiveData8(USART2);
+  if (rx2_buf_[rx2_buf_wi_] == '\n') rx2_line_cnt_++;
+  rx2_buf_wi_ = (rx2_buf_wi_ + 1) & USART_RX_BUF_MASK;
+  if (rx2_buf_wi_ == rx2_buf_ri_) rx2_buf_ri_++;
 }
 
-void usart1_tx_dma_cb()
+void usart2_tx_dma_cb()
 {
-  tx_ongoing1_ = false;
+  tx2_ongoing_ = false;
 }
 
-int usart1_puts(const uint8_t const * pbuf)
+int usart2_puts(const uint8_t const * pbuf)
 {
   int cnt = 0;
   assert(pbuf[0] != 0);
-  if (!tx_ongoing1_)
+  if (tx2_ongoing_)
     return 0;
   do {
-    tx_buf1_[cnt] = pbuf[cnt];
+    tx2_buf_[cnt] = pbuf[cnt];
     cnt++;
     if (cnt == USART_TX_BUF_LEN) return 0;
   }while(pbuf[cnt]);
-  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_3, cnt);
-  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_3);
-  tx_ongoing1_ = true;
+  LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_2);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_2, cnt);
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_2);
+  tx2_ongoing_ = true;
   return cnt;
 }
 
-int usart1_getc()
+int usart2_getc()
 {
   int c;
-  if (rx_buf1_ri_ == rx_buf1_wi_)
+  if (rx2_buf_ri_ == rx2_buf_wi_)
     return 0;
-  c = rx_buf1_[rx_buf1_ri_++];
-  rx_buf1_ri_ &= USART_RX_BUF_MASK;
-  if (c == '\n') rx_line_cnt_--;
+  c = rx2_buf_[rx2_buf_ri_++];
+  rx2_buf_ri_ &= USART_RX_BUF_MASK;
+  if (c == '\n') rx2_line_cnt_--;
   return c;
 }
 
-int usart1_gets(char* pbuf)
+int usart2_gets(char* pbuf)
 {
   int cnt = 0;
-  if (rx_line_cnt_ == 0) return 0;
+  if (rx2_line_cnt_ == 0) return 0;
   do
   {
-    pbuf[cnt] = usart1_getc();
+    pbuf[cnt] = usart2_getc();
   } while (pbuf[cnt++] != '\n');
   pbuf[cnt++] = '\0';
   return cnt;
