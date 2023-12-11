@@ -27,7 +27,7 @@
 
 const static int adc_vref_mv = 1212;
 
-static uint32_t adc_results[ADC_BUF_LEN];
+static uint16_t adc_results[ADC_BUF_LEN];
 static int adc_ref_raw = 0;
 
 int adc_get_raw(const int ch);
@@ -35,28 +35,30 @@ int adc_get_raw(const int ch);
 void adc_init()
 {
   LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
-  LL_ADC_Disable(ADC1);
   LL_ADC_REG_SetDMATransfer(ADC1, LL_ADC_REG_DMA_TRANSFER_NONE);
+
+  LL_ADC_EnableInternalRegulator(ADC1);
+  LL_mDelay(1);
   LL_ADC_StartCalibration(ADC1);
   while(LL_ADC_IsCalibrationOnGoing(ADC1));
-  LL_ADC_ClearFlag_ADRDY(ADC1);
   LL_mDelay(1);
+  LL_ADC_ClearFlag_ADRDY(ADC1);
   LL_ADC_Enable(ADC1);
   LL_mDelay(1);
 
+  LL_ADC_REG_SetDMATransfer(ADC1, LL_ADC_REG_DMA_TRANSFER_UNLIMITED);
   LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_1,
     (uint32_t)LL_ADC_DMA_GetRegAddr(ADC1, LL_ADC_DMA_REG_REGULAR_DATA));
   LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_1, (uint32_t)adc_results);
   LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_1, ADC_BUF_LEN);
   LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
   LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
-
   LL_ADC_REG_StartConversion(ADC1);
 }
 
 void adc_dma_cb()
 {
-  adc_ref_raw = adc_get_raw(5);
+  adc_ref_raw = adc_get_raw(4);
 }
 
 int adc_get_vm()
@@ -77,8 +79,8 @@ int adc_get_cur()
 
 int adc_get_raw(const int ch)
 {
-  int res = 0;
-  for (int i = 0; i < ADC_CH_NUM; ++i)
+  int32_t res = 0;
+  for (int i = 0; i < ADC_SUM_NUM; ++i)
   {
     res += adc_results[i * ADC_CH_NUM + ch];
   }
