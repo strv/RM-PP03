@@ -22,13 +22,14 @@
 
 /* USER CODE BEGIN 0 */
 static PWM_DIR dir_ = 0;
-static uint32_t oc_high_ = 0;
-static uint32_t oc_low_ = 0;
-static uint32_t oc_cl_ = 0;
-static uint32_t oc_si_ = 0;
-static uint32_t superimpose_cycle_ = 0;
-static uint32_t superimpose_cnt_ = 0;
-static uint32_t superimpose_compare_ = 0;
+static int32_t oc_high_ = 0;
+static int32_t oc_low_ = 0;
+static int32_t oc_cl_ = 0;
+static int32_t oc_si_ = 0;
+static int superimpose_cycle_ = 0;
+static int superimpose_cnt_ = 0;
+static int superimpose_compare_ = 0;
+static int si_rate_ = 0;
 static bool enabled_ = true;
 
 void pwm_init(void)
@@ -44,27 +45,34 @@ void pwm_set_constant_light_rate(const uint16_t rate_cl)
   oc_cl_ = rate_cl * PWM_CYCLE / UINT16_MAX;
 }
 
-void pwm_set_supoerimpose_amplitude(const uint16_t rate_superimpose)
+void pwm_set_superimpose_amplitude(const uint16_t rate_superimpose)
 {
   oc_si_ = (rate_superimpose > UINT16_MAX/2 ? UINT16_MAX/2 : rate_superimpose) * (PWM_CYCLE - oc_cl_) / UINT16_MAX;
 }
 
 void pwm_set_rate(const uint16_t rate, const PWM_DIR dir)
 {
-  int32_t high, low;
-  high = rate * (PWM_CYCLE - oc_cl_) / UINT16_MAX + oc_cl_ + oc_si_ / 2;
-  low = high - oc_si_;
+  int32_t high, low, mean;
+  const int PwmMax = PWM_CYCLE - oc_cl_ + 1;
+  mean = rate * PwmMax / UINT16_MAX;
 
-  if (low < oc_cl_)
+  if (mean < oc_si_)
   {
-    high += oc_cl_ - low;
-    low = oc_cl_;
+    low = 0;
+    high = mean * 2;
   }
-  if (high > PWM_CYCLE)
+  else if (mean < PwmMax - oc_si_)
   {
-    low += high - PWM_CYCLE;
-    high = PWM_CYCLE;
+    low = mean - oc_si_;
+    high = mean + oc_si_;
   }
+  else
+  {
+    low = mean * 2 - PwmMax;
+    high = PwmMax;
+  }
+  low += oc_cl_;
+  high += oc_cl_;
 
   // critical section
   LL_TIM_DisableIT_UPDATE(TIM1);
@@ -80,11 +88,11 @@ void pwm_set_superimpose_freq(const int freq)
     superimpose_cycle_ = PWM_HZ / freq;
   else
     superimpose_cycle_ = 0;
+  superimpose_compare_ = superimpose_cycle_ / 2;
 }
 
 void pwm_set_superimpose_rate(const uint16_t rate)
 {
-  superimpose_compare_ = superimpose_cycle_ * rate / UINT16_MAX;
 }
 
 void pwm_disable_output()
@@ -115,13 +123,13 @@ void pwm_cb()
     }
     else if (dir_ == PWM_DIR_FWD)
     {
-      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
       LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
+      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1);
     }
     else if (dir_ == PWM_DIR_REV)
     {
-      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
       LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1);
+      LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1N);
     }
   }
 }

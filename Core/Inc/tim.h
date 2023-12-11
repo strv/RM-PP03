@@ -48,10 +48,9 @@ typedef enum {
 
 void pwm_init(void);
 void pwm_set_constant_light_rate(const uint16_t rate_cl);
-void pwm_set_supoerimpose_amplitude(const uint16_t rate_superimpose);
+void pwm_set_superimpose_amplitude(const uint16_t rate_superimpose);
 void pwm_set_rate(const uint16_t rate, const PWM_DIR dir);
 void pwm_set_superimpose_freq(const int freq);
-void pwm_set_superimpose_rate(const uint16_t rate);
 void pwm_disable_output();
 void pwm_enable_output();
 void pwm_cb();

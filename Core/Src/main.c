@@ -331,17 +331,17 @@ int main(void)
           continue;
         pwm_set_constant_light_rate(rate);
       }
-      else if (strncmp(buf_word, "CMDSIR", 6) == 0)
+      else if (strncmp(buf_word, "CMDSIA", 6) == 0)
       {
-        // Set superimpose rate value command
-        // $SSPP03,id,CMDSIR,r*cc
-        long rate = 0;
+        // Set superimpose amplitude value command
+        // $SSPP03,id,CMDSIA,a*cc
+        long amp = 0;
         if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
           continue;
         work_point = buf_word;
-        if(xatoi(&work_point, &rate) == 0)
+        if(xatoi(&work_point, &amp) == 0)
           continue;
-        pwm_set_superimpose_rate(rate);
+        pwm_set_superimpose_amplitude(amp);
       }
       else if (strncmp(buf_word, "CMDRST", 6) == 0)
       {
