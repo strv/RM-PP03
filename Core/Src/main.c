@@ -369,7 +369,7 @@ int main(void)
       xsprintf(buf_rep, "%s,1,REPPWR,%d,%d*", NmeaPrefix, vm_mv, cur_ma);
       rep_offset += nmea0183_add_suffix(buf_rep);
       xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, sw_emo_pressed ? 1 : 0, mode, state);
-      rep_offset += nmea0183_add_suffix(buf_rep);
+      rep_offset += nmea0183_add_suffix(buf_rep+rep_offset);
       usart2_puts(buf_rep);
     }
 
