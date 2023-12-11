@@ -223,7 +223,7 @@ int main(void)
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
   sw_proc_ms_prev_ = ms;
-  report_interval_ms_ = ms;
+  report_ms_prev_ = ms;
   led_proc_ms_prev_ = ms;
   while (1)
   {
