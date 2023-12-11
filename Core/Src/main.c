@@ -220,6 +220,11 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  pwm_set_rate(0, PWM_DIR_IDLE);
+  pwm_set_constant_light_rate(0);
+  pwm_set_superimpose_amplitude(65535/5);
+  pwm_set_superimpose_freq(20);
+
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
   sw_proc_ms_prev_ = ms;
