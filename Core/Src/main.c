@@ -43,10 +43,11 @@ typedef enum
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-const static uint64_t ReportIntervalDefault = 100;
-const static uint64_t EmoResetDuration = 5000;
+const static uint32_t ReportIntervalDefault = 100;
+const static uint32_t SwitchProcInterval = 10;
+const static uint32_t EmoResetDuration = 5000;
 const static char* NmeaPrefix = "$SSPP03";
-const static uint64_t LedProcInterval = 125;
+const static uint32_t LedProcInterval = 125;
 const static int LedPhaseMax = 8;
 const static bool LedPatternStartup[] = {false, false, false, false, false, false, false, false};
 const static bool LedPatternNormal[] = {false, false, false, false, true, true, true, true};
@@ -61,10 +62,11 @@ const static bool LedPatternEmo[] = {false, true, false, true, false, true, fals
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint64_t ms = 0;
-static uint64_t report_interval_ms_ = ReportIntervalDefault;
-static uint64_t report_ms_prev_ = 0;
-static uint64_t led_proc_ms_prev_ = 0;
+uint32_t ms = 0;
+static uint32_t report_interval_ms_ = ReportIntervalDefault;
+static uint32_t report_ms_prev_ = 0;
+static uint32_t sw_proc_ms_prev_ = 0;
+static uint32_t led_proc_ms_prev_ = 0;
 static int led_phase_ = 0;
 static STATE state = STATE_STARTUP;
 /* USER CODE END PV */
@@ -173,8 +175,12 @@ int main(void)
   int vm_mv = 0;
   int cur_ma = 0;
   int mode = 0;
-  bool sw_emo_pressed = false;
-  uint64_t sw_emo_press_ms = 0;
+  int sw_mode_prev = 0;
+  bool emo = false;
+  bool emo_prev = false;
+  uint32_t emo_change_ms = 0;
+  STATE state_emo_changed = state;
+  bool sw_emo_prev = false;
   const bool* led_pattern = LedPatternStartup;
   /* USER CODE END 1 */
 
@@ -209,53 +215,49 @@ int main(void)
   LL_SYSTICK_EnableIT();
   usart_init();
   pwm_init();
-  adc_init();
+  //adc_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
+  sw_proc_ms_prev_ = ms;
+  report_interval_ms_ = ms;
+  led_proc_ms_prev_ = ms;
   while (1)
   {
     vm_mv = adc_get_vm();
     cur_ma = adc_get_cur();
-    mode = sw_mode();
-    bool sw_emo = sw_emo_is_pressed();
-    if (sw_emo && !sw_emo_pressed)
-    {
-      // change state not pressed to pressed
-      sw_emo_pressed = true;
-
-      if (state == STATE_EMO)
-      {
-        // if already emergency stopped,
-        // emo press is for release
-        sw_emo_press_ms = ms;
-      }
-      else
-      {
-        // trigger emergency stop
-        pwm_disable_output();
-        led_pattern = LedPatternEmo;
-        state = STATE_EMO;
-      }
-    }
-    else if (state == STATE_EMO && sw_emo && ms - sw_emo_press_ms >= EmoResetDuration)
-    {
-      // enough time elapsed from switch pressed
-      pwm_set_rate(0, PWM_DIR_IDLE);
-      pwm_enable_output();
-      led_pattern = LedPatternNormal;
-      state = STATE_NORMAL;
-    }
-    else if (!sw_emo)
-    {
-      sw_emo_press_ms = 0;
-    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (emo != emo_prev)
+    {
+      // when change emo switch
+      emo_change_ms = ms;
+      state_emo_changed = state;
+    }
+    emo_prev = emo;
+
+    if (emo
+        && state == STATE_EMO
+        && state_emo_changed == STATE_EMO
+        && ms - emo_change_ms >= EmoResetDuration)
+    {
+      // reset emo state
+      led_pattern = LedPatternNormal;
+      state = STATE_NORMAL;
+      pwm_set_rate(0, PWM_DIR_IDLE);
+      pwm_enable_output();
+    }
+    else if (emo && state_emo_changed != STATE_EMO)
+    {
+      led_pattern = LedPatternEmo;
+      state = STATE_EMO;
+      pwm_disable_output();
+    }
+
     while(usart2_gets(buf_cmd))
     {
       long cmd_id;
@@ -362,13 +364,25 @@ int main(void)
       }
     }
 
+    if (ms - sw_proc_ms_prev_ >= SwitchProcInterval)
+    {
+      sw_proc_ms_prev_ += SwitchProcInterval;
+      bool s = sw_emo_is_pressed();
+      if (s == sw_emo_prev) emo = s;
+      sw_emo_prev = s;
+
+      int m = sw_mode();
+      if (m == sw_mode_prev) mode = m;
+      sw_mode_prev = m;
+    }
+
     if (ms - report_ms_prev_ >= report_interval_ms_)
     {
       report_ms_prev_ += report_interval_ms_;
       rep_offset = 0;
       xsprintf(buf_rep, "%s,1,REPPWR,%d,%d*", NmeaPrefix, vm_mv, cur_ma);
       rep_offset += nmea0183_add_suffix(buf_rep);
-      xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, sw_emo_pressed ? 1 : 0, mode, state);
+      xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, emo ? 1 : 0, mode, state);
       rep_offset += nmea0183_add_suffix(buf_rep+rep_offset);
       usart2_puts(buf_rep);
     }
