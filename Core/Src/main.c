@@ -223,7 +223,7 @@ int main(void)
   pwm_set_rate(0, PWM_DIR_IDLE);
   pwm_set_constant_light_rate(0);
   pwm_set_superimpose_amplitude(65535/5);
-  pwm_set_superimpose_freq(20);
+  pwm_set_superimpose_freq(50);
 
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
