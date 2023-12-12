@@ -21,7 +21,8 @@
 #include "tim.h"
 
 /* USER CODE BEGIN 0 */
-static PWM_DIR dir_ = 0;
+static PWM_DIR dir_ = PWM_DIR_IDLE;
+static PWM_DIR dir_resv_ = PWM_DIR_IDLE;
 static int32_t oc_high_ = 0;
 static int32_t oc_low_ = 0;
 static int32_t oc_cl_ = 0;
@@ -29,32 +30,14 @@ static int32_t oc_si_ = 0;
 static int superimpose_cycle_ = 0;
 static int superimpose_cnt_ = 0;
 static int superimpose_compare_ = 0;
-static int si_rate_ = 0;
+static int rate_ = 0;
 static bool enabled_ = true;
 
-void pwm_init(void)
-{
-  LL_TIM_ClearFlag_UPDATE(TIM1);
-  LL_TIM_EnableAllOutputs(TIM1);
-  LL_TIM_EnableIT_UPDATE(TIM1);
-  LL_TIM_EnableCounter(TIM1);
-}
-
-void pwm_set_constant_light_rate(const uint16_t rate_cl)
-{
-  oc_cl_ = rate_cl * PWM_CYCLE / UINT16_MAX;
-}
-
-void pwm_set_superimpose_amplitude(const uint16_t rate_superimpose)
-{
-  oc_si_ = (rate_superimpose > UINT16_MAX/2 ? UINT16_MAX/2 : rate_superimpose) * (PWM_CYCLE - oc_cl_) / UINT16_MAX;
-}
-
-void pwm_set_rate(const uint16_t rate, const PWM_DIR dir)
+static void update_oc_value()
 {
   int32_t high, low, mean;
   const int PwmMax = PWM_CYCLE - oc_cl_ + 1;
-  mean = rate * PwmMax / UINT16_MAX;
+  mean = rate_ * PwmMax / UINT16_MAX;
 
   if (mean < oc_si_)
   {
@@ -76,10 +59,37 @@ void pwm_set_rate(const uint16_t rate, const PWM_DIR dir)
 
   // critical section
   LL_TIM_DisableIT_UPDATE(TIM1);
-  dir_ = dir;
+  dir_ = dir_resv_;
   oc_low_ = low;
   oc_high_ = high;
   LL_TIM_EnableIT_UPDATE(TIM1);
+}
+
+void pwm_init(void)
+{
+  LL_TIM_ClearFlag_UPDATE(TIM1);
+  LL_TIM_EnableAllOutputs(TIM1);
+  LL_TIM_EnableIT_UPDATE(TIM1);
+  LL_TIM_EnableCounter(TIM1);
+}
+
+void pwm_set_constant_light_rate(const uint16_t rate_cl)
+{
+  oc_cl_ = rate_cl * PWM_CYCLE / UINT16_MAX;
+  update_oc_value();
+}
+
+void pwm_set_superimpose_amplitude(const uint16_t rate_superimpose)
+{
+  oc_si_ = (rate_superimpose > UINT16_MAX/2 ? UINT16_MAX/2 : rate_superimpose) * (PWM_CYCLE - oc_cl_) / UINT16_MAX;
+  update_oc_value();
+}
+
+void pwm_set_rate(const uint16_t rate, const PWM_DIR dir)
+{
+  rate_ = rate;
+  dir_resv_ = dir;
+  update_oc_value();
 }
 
 void pwm_set_superimpose_freq(const int freq)
@@ -89,10 +99,6 @@ void pwm_set_superimpose_freq(const int freq)
   else
     superimpose_cycle_ = 0;
   superimpose_compare_ = superimpose_cycle_ / 2;
-}
-
-void pwm_set_superimpose_rate(const uint16_t rate)
-{
 }
 
 void pwm_disable_output()
