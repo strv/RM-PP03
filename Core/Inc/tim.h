@@ -31,6 +31,8 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "adc.h"
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Private defines */

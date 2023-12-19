@@ -69,6 +69,7 @@ static uint32_t sw_proc_ms_prev_ = 0;
 static uint32_t led_proc_ms_prev_ = 0;
 static int led_phase_ = 0;
 static STATE state = STATE_STARTUP;
+static bool adc_update_ = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -158,7 +159,10 @@ int nmea0183_check_sum(const char* buf)
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void adc_update_reserve()
+{
+  adc_update_ = true;
+}
 /* USER CODE END 0 */
 
 /**
@@ -173,7 +177,9 @@ int main(void)
   char buf_word[16];
   int rep_offset = 0;
   int vm_mv = 0;
+  int vm_mv_peak = 0;
   int cur_ma = 0;
+  int cur_ma_peak = 0;
   int mode = 0;
   int sw_mode_prev = 0;
   bool emo = false;
@@ -232,8 +238,15 @@ int main(void)
   led_proc_ms_prev_ = ms;
   while (1)
   {
-    vm_mv = adc_get_vm();
-    cur_ma = adc_get_cur();
+    if (adc_update_)
+    {
+      adc_update_ = false;
+      adc_lpf_proc();
+      vm_mv = adc_get_vm();
+      vm_mv_peak = adc_get_vm_peak();
+      cur_ma = adc_get_cur();
+      cur_ma_peak = adc_get_cur_peak();
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -385,7 +398,7 @@ int main(void)
     {
       report_ms_prev_ += report_interval_ms_;
       rep_offset = 0;
-      xsprintf(buf_rep, "%s,1,REPPWR,%d,%d*", NmeaPrefix, vm_mv, cur_ma);
+      xsprintf(buf_rep, "%s,1,REPPWR,%d,%d,%d,%d*", NmeaPrefix, vm_mv, vm_mv_peak, cur_ma, cur_ma_peak);
       rep_offset += nmea0183_add_suffix(buf_rep);
       xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, emo ? 1 : 0, mode, state);
       rep_offset += nmea0183_add_suffix(buf_rep+rep_offset);

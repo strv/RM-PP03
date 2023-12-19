@@ -29,11 +29,14 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Private defines */
-
+#define ADC_SUM_Q   (4)
+#define ADC_SUM_NUM (1 << ADC_SUM_Q)
+#define ADC_BUF_LEN (ADC_CH_NUM * ADC_SUM_NUM)
 /* USER CODE END Private defines */
 
 void MX_ADC1_Init(void);
@@ -41,7 +44,7 @@ void MX_ADC1_Init(void);
 /* USER CODE BEGIN Prototypes */
 typedef enum
 {
-  ADC_CH_VM,
+  ADC_CH_VM = 0,
   ADC_CH_CUR,
   ADC_CH_AUX0,
   ADC_CH_AUX1,
@@ -52,6 +55,11 @@ void adc_init();
 void adc_dma_cb();
 int adc_get_vm();
 int adc_get_cur();
+int adc_get_vm_peak();
+int adc_get_cur_peak();
+void adc_trigger();
+void adc_set_pwm_rate(const uint16_t rate);
+void adc_lpf_proc();
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

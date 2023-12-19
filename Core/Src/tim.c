@@ -32,6 +32,8 @@ static int superimpose_cnt_ = 0;
 static int superimpose_compare_ = 0;
 static int rate_ = 0;
 static bool enabled_ = true;
+static int adc_timings_[ADC_SUM_NUM] = {0};
+static int adc_cnt_ = 0;
 
 static void update_oc_value()
 {
@@ -56,6 +58,8 @@ static void update_oc_value()
   }
   low += oc_cl_;
   high += oc_cl_;
+
+  adc_set_pwm_rate((low + high) / 2);
 
   // critical section
   LL_TIM_DisableIT_UPDATE(TIM1);
@@ -99,6 +103,10 @@ void pwm_set_superimpose_freq(const int freq)
   else
     superimpose_cycle_ = 0;
   superimpose_compare_ = superimpose_cycle_ / 2;
+  for (int i = 0; i < ADC_SUM_NUM; ++i)
+  {
+    adc_timings_[i] = i * superimpose_cycle_ / ADC_SUM_NUM;
+  }
 }
 
 void pwm_disable_output()
@@ -113,12 +121,22 @@ void pwm_enable_output()
 
 void pwm_cb()
 {
+  if (adc_timings_[adc_cnt_] == superimpose_cnt_)
+  {
+    ++adc_cnt_;
+    if (adc_cnt_ == ADC_SUM_NUM)
+    {
+      adc_cnt_ = 0;
+      adc_update_reserve();
+    }
+    adc_trigger();
+  }
   ++superimpose_cnt_;
   if (superimpose_cnt_ == superimpose_compare_)
   {
     LL_TIM_OC_SetCompareCH1(TIM1, oc_high_);
   }
-  else if (superimpose_cnt_ >= superimpose_cycle_)
+  else if (superimpose_cnt_ == superimpose_cycle_)
   {
     superimpose_cnt_ = 0;
     LL_TIM_OC_SetCompareCH1(TIM1, oc_low_);

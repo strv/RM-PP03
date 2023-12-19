@@ -21,16 +21,45 @@
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
-#define ADC_SUM_Q   (4)
-#define ADC_SUM_NUM (1 << ADC_SUM_Q)
-#define ADC_BUF_LEN (ADC_CH_NUM * ADC_SUM_NUM)
+const static int AdcVrefMv = 1212;
+const static int AdcLpfFo = 1;
+const static int AdcLpfQ = 8;
+const static int AdcLpfDnm = 1 << AdcLpfQ;
+const static int AdcLpf1_Fo = AdcLpfDnm - AdcLpfFo;
 
-const static int adc_vref_mv = 1212;
+static uint16_t adc_results_[ADC_BUF_LEN];
+static int adc_lpf_results_ave_[ADC_CH_NUM] = {0};
+static int adc_lpf_results_peak_[ADC_CH_NUM] = {0};
+static bool adc_init_done_ = false;
+static int vm_raw_ = 0;
+static int vm_peak_raw_ = 0;
+static int cur_raw_ = 0;
+static int cur_peak_raw_ = 0;
+static int pwm_rate_ = 0;
 
-static uint16_t adc_results[ADC_BUF_LEN];
-static int adc_ref_raw = 0;
+int raw2mv(const int raw)
+{
+  if (adc_lpf_results_ave_[ADC_CH_VREF] == 0)
+    return 0;
+  // 110k / 10k -> ADC
+  return raw * AdcVrefMv * 11 / adc_lpf_results_ave_[ADC_CH_VREF];
+}
 
-int adc_get_raw(const int ch);
+int raw2ma(const int raw)
+{
+  if (adc_lpf_results_ave_[ADC_CH_VREF] == 0)
+    return 0;
+  // 0.02 ohm * 51
+  int ma = raw * AdcVrefMv * 50 / (adc_lpf_results_ave_[ADC_CH_VREF] * 51);
+  if (pwm_rate_ == 0)
+    ma = 0;
+  else
+    ma = ma * PWM_CYCLE / pwm_rate_;
+  return ma;
+}
+
+void adc_get_raw(const int ch, int* ave);
+void adc_get_raw_peak(const int ch, int* ave, int* peak);
 
 void adc_init()
 {
@@ -49,42 +78,81 @@ void adc_init()
   LL_ADC_REG_SetDMATransfer(ADC1, LL_ADC_REG_DMA_TRANSFER_UNLIMITED);
   LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_1,
     (uint32_t)LL_ADC_DMA_GetRegAddr(ADC1, LL_ADC_DMA_REG_REGULAR_DATA));
-  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_1, (uint32_t)adc_results);
+  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_1, (uint32_t)adc_results_);
   LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_1, ADC_BUF_LEN);
   LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
   LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
-  LL_ADC_REG_StartConversion(ADC1);
+
+  adc_init_done_ = true;
 }
 
 void adc_dma_cb()
 {
-  adc_ref_raw = adc_get_raw(4);
 }
 
 int adc_get_vm()
 {
-  if (adc_ref_raw == 0)
-    return 0;
-  // 110k / 10k -> ADC
-  return adc_get_raw(0) * adc_vref_mv * 11 / adc_ref_raw;
+  return raw2mv(adc_lpf_results_ave_[ADC_CH_VM]);
 }
 
 int adc_get_cur()
 {
-  if (adc_ref_raw == 0)
-    return 0;
-  // 0.02 ohm * 51
-  return adc_get_raw(1) * adc_vref_mv * 50 / (adc_ref_raw * 51);
+  return raw2ma(adc_lpf_results_ave_[ADC_CH_CUR]);
 }
 
-int adc_get_raw(const int ch)
+int adc_get_vm_peak()
 {
-  int32_t res = 0;
+  return raw2mv(adc_lpf_results_peak_[ADC_CH_VM]);
+}
+
+int adc_get_cur_peak()
+{
+  return raw2ma(adc_lpf_results_peak_[ADC_CH_CUR]);
+}
+
+void adc_get_raw(const int ch, int* ave)
+{
+  *ave = 0;
   for (int i = 0; i < ADC_SUM_NUM; ++i)
   {
-    res += adc_results[i * ADC_CH_NUM + ch];
+    *ave += adc_results_[i * ADC_CH_NUM + ch];
   }
-  return res >> ADC_SUM_Q;
+  *ave >>= ADC_SUM_Q;
+}
+
+void adc_get_raw_peak(const int ch, int* ave, int* peak)
+{
+  *ave = 0;
+  *peak = 0;
+  for (int i = 0; i < ADC_SUM_NUM; ++i)
+  {
+    *ave += adc_results_[i * ADC_CH_NUM + ch];
+    if (adc_results_[i * ADC_CH_NUM + ch] > *peak)
+      *peak = adc_results_[i * ADC_CH_NUM + ch];
+  }
+  *ave >>= ADC_SUM_Q;
+}
+
+void adc_trigger()
+{
+  if (adc_init_done_)
+    LL_ADC_REG_StartConversion(ADC1);
+}
+
+void adc_set_pwm_rate(const uint16_t rate)
+{
+  pwm_rate_ = rate;
+}
+
+void adc_lpf_proc()
+{
+  int a, p;
+  for (int i = 0; i < ADC_CH_NUM; ++i)
+  {
+    adc_get_raw_peak(i, &a, &p);
+    adc_lpf_results_ave_[i] = (a * AdcLpfFo + adc_lpf_results_ave_[i] * AdcLpf1_Fo) >> AdcLpfQ;
+    adc_lpf_results_peak_[i] = (p * AdcLpfFo + adc_lpf_results_peak_[i] * AdcLpf1_Fo) >> AdcLpfQ;
+  }
 }
 /* USER CODE END 0 */
 
@@ -190,15 +258,16 @@ void MX_ADC1_Init(void)
    LL_ADC_ClearFlag_CCRDY(ADC1);
   ADC_REG_InitStruct.TriggerSource = LL_ADC_REG_TRIG_SOFTWARE;
   ADC_REG_InitStruct.SequencerLength = LL_ADC_REG_SEQ_SCAN_ENABLE_5RANKS;
-  ADC_REG_InitStruct.ContinuousMode = LL_ADC_REG_CONV_CONTINUOUS;
+  ADC_REG_InitStruct.SequencerDiscont = LL_ADC_REG_SEQ_DISCONT_DISABLE;
+  ADC_REG_InitStruct.ContinuousMode = LL_ADC_REG_CONV_SINGLE;
   ADC_REG_InitStruct.DMATransfer = LL_ADC_REG_DMA_TRANSFER_UNLIMITED;
   ADC_REG_InitStruct.Overrun = LL_ADC_REG_OVR_DATA_PRESERVED;
   LL_ADC_REG_Init(ADC1, &ADC_REG_InitStruct);
   LL_ADC_SetOverSamplingScope(ADC1, LL_ADC_OVS_DISABLE);
   LL_ADC_SetTriggerFrequencyMode(ADC1, LL_ADC_CLOCK_FREQ_MODE_HIGH);
   LL_ADC_SetCommonPathInternalCh(__LL_ADC_COMMON_INSTANCE(ADC1), LL_ADC_AWD_CH_VREFINT_REG);
-  LL_ADC_SetSamplingTimeCommonChannels(ADC1, LL_ADC_SAMPLINGTIME_COMMON_1, LL_ADC_SAMPLINGTIME_160CYCLES_5);
-  LL_ADC_SetSamplingTimeCommonChannels(ADC1, LL_ADC_SAMPLINGTIME_COMMON_2, LL_ADC_SAMPLINGTIME_160CYCLES_5);
+  LL_ADC_SetSamplingTimeCommonChannels(ADC1, LL_ADC_SAMPLINGTIME_COMMON_1, LL_ADC_SAMPLINGTIME_39CYCLES_5);
+  LL_ADC_SetSamplingTimeCommonChannels(ADC1, LL_ADC_SAMPLINGTIME_COMMON_2, LL_ADC_SAMPLINGTIME_79CYCLES_5);
   LL_ADC_DisableIT_EOC(ADC1);
   LL_ADC_DisableIT_EOS(ADC1);
 
@@ -320,7 +389,7 @@ void MX_ADC1_Init(void)
      }
    /* Clear flag ADC channel configuration ready */
    LL_ADC_ClearFlag_CCRDY(ADC1);
-  LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_VREFINT, LL_ADC_SAMPLINGTIME_COMMON_1);
+  LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_VREFINT, LL_ADC_SAMPLINGTIME_COMMON_2);
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
