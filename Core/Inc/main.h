@@ -69,7 +69,7 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+void adc_update_reserve();
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
