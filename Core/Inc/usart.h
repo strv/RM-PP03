@@ -31,8 +31,9 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include <assert.h>
 #include <stdbool.h>
+#include <string.h>
 
-#include "xprintf.h"
+#include "tim.h"
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Private defines */
@@ -45,11 +46,14 @@ void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN Prototypes */
 void usart_init();
 void usart2_rx_cb();
+void usart2_rx_ore_cb();
 void usart2_tx_dma_cb();
 int usart2_rx_line();
-int usart2_puts(const uint8_t const * pbuf);
+int usart2_tx_buf(const uint8_t* pbuf, const int length);
 int usart2_getc();
-int usart2_gets(char* pbuf);
+void mb_timer_cb();
+int mb_pop_frame(uint8_t* pframe);
+void mb_push_frame(uint8_t* pframe, int length);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

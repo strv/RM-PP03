@@ -22,16 +22,42 @@
 
 /* USER CODE BEGIN 0 */
 #define USART_RX_BUF_LEN (128)
-#define USART_TX_BUF_LEN (128)
+#define USART_TX_BUF_LEN (256)
 
 const static int USART_RX_BUF_MASK = USART_RX_BUF_LEN - 1;
+const static uint32_t ModbusIntervalUs = 3.5f * 10 * 1000 * 1000 / MODBUS_BAUD; // duration of 3.5 character in micro sec
+const static uint32_t ModbusInitial = 0xFFFF;
+const static uint32_t ModbusPoly = 0xA001;
 
 static uint8_t rx2_buf_[USART_RX_BUF_LEN];
 static uint8_t tx2_buf_[USART_TX_BUF_LEN];
 static bool tx2_ongoing_ = false;
 static int rx2_buf_ri_ = 0;
 static int rx2_buf_wi_ = 0;
-static int rx2_line_cnt_ = 0;
+static uint32_t mb_last_rx_us_ = 0;
+static uint32_t mb_timer_ = 0;
+static int mb_frame_index_ = 0;
+static uint8_t mb_frame_[256];
+static int mb_frame_length_ = 0;
+
+static uint16_t mb_crc_reg_ = 0;
+
+static void mb_crc_reset(uint16_t* reg)
+{
+  *reg = ModbusInitial;
+}
+
+static void mb_crc_push(const uint8_t b, uint16_t* reg)
+{
+  volatile int shifts = 8;
+  *reg ^= b;
+  while (shifts--)
+  {
+    *reg >>= 1;
+    if (__get_APSR() & APSR_C_Msk)
+      *reg ^= ModbusPoly;
+  }
+}
 
 void usart_init()
 {
@@ -49,17 +75,30 @@ void usart_init()
     (uint32_t)tx2_buf_);
   LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_2);
 
-  LL_USART_Enable(USART2);
+  LL_TIM_EnableIT_UPDATE(TIM17);
 
-  xdev_in(usart2_getc);
+  LL_USART_Enable(USART2);
+  mb_crc_reset(&mb_crc_reg_);
 }
 
 void usart2_rx_cb()
 {
-  rx2_buf_[rx2_buf_wi_] = LL_USART_ReceiveData8(USART2);
-  if (rx2_buf_[rx2_buf_wi_] == '\n') rx2_line_cnt_++;
+  mb_last_rx_us_ = mb_timer_;
+  const uint8_t c = LL_USART_ReceiveData8(USART2);
+  rx2_buf_[rx2_buf_wi_] = c;
+  mb_timer_ = 0;
+  LL_TIM_EnableCounter(TIM17);
+  mb_frame_length_ = 0;
+  mb_frame_[mb_frame_index_] = c;
+  mb_frame_index_++;
+
   rx2_buf_wi_ = (rx2_buf_wi_ + 1) & USART_RX_BUF_MASK;
   if (rx2_buf_wi_ == rx2_buf_ri_) rx2_buf_ri_++;
+}
+
+void usart2_rx_ore_cb()
+{
+  mb_timer_ = 0;
 }
 
 void usart2_tx_dma_cb()
@@ -67,22 +106,16 @@ void usart2_tx_dma_cb()
   tx2_ongoing_ = false;
 }
 
-int usart2_puts(const uint8_t const * pbuf)
+int usart2_tx_buf(const uint8_t* pbuf, const int length)
 {
-  int cnt = 0;
-  assert(pbuf[0] != 0);
-  if (tx2_ongoing_)
+  if (length > USART_TX_BUF_LEN)
     return 0;
-  do {
-    tx2_buf_[cnt] = pbuf[cnt];
-    cnt++;
-    if (cnt == USART_TX_BUF_LEN) return 0;
-  }while(pbuf[cnt]);
+  memcpy(tx2_buf_, pbuf, length);
   LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_2);
-  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_2, cnt);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_2, length);
   LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_2);
   tx2_ongoing_ = true;
-  return cnt;
+  return length;
 }
 
 int usart2_getc()
@@ -92,20 +125,71 @@ int usart2_getc()
     return 0;
   c = rx2_buf_[rx2_buf_ri_++];
   rx2_buf_ri_ &= USART_RX_BUF_MASK;
-  if (c == '\n') rx2_line_cnt_--;
   return c;
 }
 
-int usart2_gets(char* pbuf)
+void mb_timer_cb()
 {
-  int cnt = 0;
-  if (rx2_line_cnt_ == 0) return 0;
-  do
+  if (mb_timer_ < ModbusIntervalUs)
   {
-    pbuf[cnt] = usart2_getc();
-  } while (pbuf[cnt++] != '\n');
-  pbuf[cnt++] = '\0';
-  return cnt;
+    ++mb_timer_;
+  }
+  else if (mb_timer_ == ModbusIntervalUs)
+  {
+    LL_USART_DisableIT_RXNE(USART2);
+    if (mb_frame_index_ >= 4)  // valid frame length
+    {
+      uint16_t rx_crc = mb_frame_[mb_frame_index_ - 1] << 8 | mb_frame_[mb_frame_index_ - 2];
+      for (int i = 0; i < mb_frame_index_-2; ++i)
+      {
+        mb_crc_push(mb_frame_[i], &mb_crc_reg_);
+      }
+      if (rx_crc == mb_crc_reg_)
+      {
+        mb_frame_length_ = mb_frame_index_;
+      }
+    }
+    mb_crc_reset(&mb_crc_reg_);
+    mb_frame_index_ = 0;
+    LL_TIM_DisableCounter(TIM17);
+    LL_USART_EnableIT_RXNE(USART2);
+  }
+}
+
+int mb_pop_frame(uint8_t* pframe)
+{
+  if (mb_frame_length_ == 0)
+  {
+    return 0;
+  }
+  LL_USART_DisableIT_RXNE(USART2);
+  const int len = mb_frame_length_;
+  memcpy(pframe, mb_frame_, mb_frame_length_);
+  mb_frame_length_ = 0;
+  LL_USART_EnableIT_RXNE(USART2);
+  return len;
+}
+
+void mb_push_frame(uint8_t* pframe, int length)
+{
+  if (tx2_ongoing_)
+    return;
+  const int frame_len = length+2;
+  memcpy(tx2_buf_, pframe, length);
+  uint16_t reg = 0;
+  mb_crc_reset(&reg);
+  for (int i = 0; i < length; ++i)
+  {
+    mb_crc_push(tx2_buf_[i], &reg);
+  }
+  tx2_buf_[length] = reg & 0xFF;
+  tx2_buf_[length+1] = reg >> 8;
+  LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_2);
+  LL_DMA_SetMemoryAddress(DMA1, LL_DMA_CHANNEL_2,
+    (uint32_t)tx2_buf_);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_2, frame_len);
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_2);
+  tx2_ongoing_ = true;
 }
 /* USER CODE END 0 */
 
@@ -267,7 +351,7 @@ void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   USART_InitStruct.PrescalerValue = LL_USART_PRESCALER_DIV1;
-  USART_InitStruct.BaudRate = 115200;
+  USART_InitStruct.BaudRate = MODBUS_BAUD;
   USART_InitStruct.DataWidth = LL_USART_DATAWIDTH_8B;
   USART_InitStruct.StopBits = LL_USART_STOPBITS_1;
   USART_InitStruct.Parity = LL_USART_PARITY_NONE;
