@@ -39,14 +39,25 @@ typedef enum
   STATE_NORMAL,
   STATE_EMO,
 }STATE;
+
+typedef enum
+{
+  MB_EC_ILLEGAL_FUNCTION = 0x01,
+  MB_EC_ILLEGAL_DATA_ADDRESS,
+  MB_EC_ILLEGAL_DATA_VALUE,
+  MB_EC_SERVER_DEVICFEFAILURE,
+  MB_EC_ACKNOWLEDGE,
+  MB_EC_SERVER_DEVICE_BUSY,
+  MB_EC_MEMORY_PARITY_ERROR = 0x08,
+  MB_EC_GATEWAY_PATH_UNAVAILABLE = 0x0A,
+  MB_EC_GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND,
+}MB_EXCEPTION_CODE;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-const static uint32_t ReportIntervalDefault = 100;
 const static uint32_t SwitchProcInterval = 10;
 const static uint32_t EmoResetDuration = 5000;
-const static char* NmeaPrefix = "$SSPP03";
 const static uint32_t LedProcInterval = 125;
 const static int LedPhaseMax = 8;
 const static bool LedPatternStartup[] = {false, false, false, false, false, false, false, false};
@@ -63,13 +74,71 @@ const static bool LedPatternEmo[] = {false, true, false, true, false, true, fals
 
 /* USER CODE BEGIN PV */
 uint32_t ms = 0;
-static uint32_t report_interval_ms_ = ReportIntervalDefault;
-static uint32_t report_ms_prev_ = 0;
 static uint32_t sw_proc_ms_prev_ = 0;
 static uint32_t led_proc_ms_prev_ = 0;
 static int led_phase_ = 0;
 static STATE state = STATE_STARTUP;
 static bool adc_update_ = false;
+
+const int MbSlaveAddress = 1;
+/*
+Modbus Coils
+Addr  : Assign
+1     : Output
+2     : Emergency mode
+*/
+typedef enum
+{
+  MB_COILS_OUTPUT = 0,
+  MB_COILS_EMERGENCY_MODE,
+  MB_COILS_NUM
+} MB_COILS;
+static bool mb_coils_[MB_COILS_NUM] = {0};
+/*
+Modbus Discrete inputs
+Addr  : Assign
+1     : Emergency switch
+2     : Mode switch
+*/
+typedef enum
+{
+  MB_DI_SW_EMO = 0,
+  MB_DI_SW_MODE,
+  MB_DI_NUM
+} MB_DISCRETE_INPUTS;
+static uint16_t mb_discrete_inputs_[MB_DI_NUM] = {0};
+/*
+Modbus Holding Registers
+Addr  : Assign
+40001 : Output rate -32768 to 32767
+40002 : Constant light rate 0 to 65535
+40003 : Superimpose amplitude rate 0 to 65535
+*/
+typedef enum
+{
+  MB_HR_OUTPUT_RATE = 0,
+  MB_HR_CL_RATE,
+  MB_HR_SI_RATE,
+  MB_HR_NUM
+} MB_HOLDING_REGISTERS;
+static uint16_t mb_holding_regs_[MB_HR_NUM] = {0};
+/*
+Modbus Input Registers
+Addr  : Assign
+30001 : Average supply voltage in mV
+30002 : Peak supply voltage in mV
+30003 : Average output current in mA
+30004 : Peak output current in mA
+*/
+typedef enum
+{
+  MB_IR_VOLT_AVE = 0,
+  MB_IR_VOLT_PEAK,
+  MB_IR_CUR_AVE,
+  MB_IR_CUR_PEAK,
+  MB_IR_NUM
+} MB_INPUT_REGISTERS;
+static uint16_t mb_input_regs_[MB_IR_NUM] = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -87,7 +156,7 @@ bool sw_emo_is_pressed()
   return LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_14) > 0 ? false : true;
 }
 
-int sw_mode()
+int sw_mode_state()
 {
   return LL_GPIO_IsInputPinSet(GPIOC, LL_GPIO_PIN_15) > 0 ? 1 : 0;
 }
@@ -100,59 +169,6 @@ void led_on()
 void led_off()
 {
   LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_6);
-}
-
-// return size of packet
-int nmea0183_add_suffix(char* buf)
-{
-  uint8_t sum = 0;
-  int cnt = 0;
-  if (buf[cnt++] != '$') return 0;
-  do {
-    sum ^= buf[cnt++];
-    if (buf[cnt] == '\n' || buf[cnt] == '\0') return 0;
-  } while (buf[cnt] != '*');
-  buf[++cnt] = itoh((sum >> 4) & 0xF);
-  buf[++cnt] = itoh((sum >> 0) & 0xF);
-  buf[++cnt] = '\r';
-  buf[++cnt] = '\n';
-  buf[++cnt] = '\0';
-  return cnt;
-}
-
-// return 1 : OK
-//        0 : NG
-int nmea0183_pop_word(char* dst, char** const src, const char delim)
-{
-  // copy characters until delimiter
-  while (**src != '\0')  // EOL
-  {
-    if (**src == delim) // delimiter
-    {
-      (*src)++; // skip delimiter
-      *dst = '\0';
-      return 1;
-    }
-    *dst++ = *(*src)++;
-  }
-  return 0;
-}
-
-// return 1 : OK
-//        0 : NG
-int nmea0183_check_sum(const char* buf)
-{
-  uint8_t sum = 0;
-  if (*buf++ != '$') return 0;
-  do {
-    sum ^= *buf++;
-    if (*buf == '\n' || *buf == '\0') return 0;
-  } while (*buf != '*');
-  if (*(++buf) != itoh((sum >> 4) & 0xF))
-    return 0;
-  if (*(++buf) != itoh((sum >> 0) & 0xF))
-    return 0;
-  return 1;
 }
 
 /* USER CODE END PFP */
@@ -172,17 +188,12 @@ void adc_update_reserve()
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-  char buf_rep[128];
-  char buf_cmd[128];
-  char buf_word[16];
-  int rep_offset = 0;
-  int vm_mv = 0;
-  int vm_mv_peak = 0;
-  int cur_ma = 0;
-  int cur_ma_peak = 0;
-  int mode = 0;
+  uint8_t mb_rx_frame[256];
+  uint8_t mb_tx_frame[256];
+  int mb_length = 0;
+  int sw_mode = 0;
   int sw_mode_prev = 0;
-  bool emo = false;
+  bool sw_emo = false;
   bool emo_prev = false;
   uint32_t emo_change_ms = 0;
   STATE state_emo_changed = state;
@@ -217,6 +228,7 @@ int main(void)
   MX_TIM1_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
   LL_SYSTICK_EnableIT();
   usart_init();
@@ -234,7 +246,6 @@ int main(void)
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
   sw_proc_ms_prev_ = ms;
-  report_ms_prev_ = ms;
   led_proc_ms_prev_ = ms;
   while (1)
   {
@@ -242,23 +253,294 @@ int main(void)
     {
       adc_update_ = false;
       adc_lpf_proc();
-      vm_mv = adc_get_vm();
-      vm_mv_peak = adc_get_vm_peak();
-      cur_ma = adc_get_cur();
-      cur_ma_peak = adc_get_cur_peak();
+      mb_input_regs_[MB_IR_VOLT_AVE] = adc_get_vm();
+      mb_input_regs_[MB_IR_VOLT_PEAK] = adc_get_vm_peak();
+      mb_input_regs_[MB_IR_CUR_AVE] = adc_get_cur();
+      mb_input_regs_[MB_IR_CUR_PEAK] = adc_get_cur_peak();
     }
+    mb_discrete_inputs_[0]  = (sw_emo   ? (1 << 0) : 0)
+                            | (sw_mode  ? (1 << 1) : 0);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (emo != emo_prev)
+    mb_length = mb_pop_frame(mb_rx_frame);
+    if (mb_length != 0)
+    {
+      const uint8_t mb_slv_addr = mb_rx_frame[0];
+      const uint8_t mb_func_code = mb_rx_frame[1];
+      const uint8_t* mb_pdata = &mb_rx_frame[2];
+      if (mb_slv_addr != 1)
+      {
+
+      }
+      else
+      {
+        int len = 0;
+        mb_tx_frame[len++] = 0x01;
+        switch (mb_func_code)
+        {
+          // 01 (0x01) Read Coils
+          case 0x01:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_coils = mb_pdata[2] << 8 | mb_pdata[3];
+            if (starting_addr > MB_COILS_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else if (quantity_of_coils == 0 || quantity_of_coils + starting_addr > MB_COILS_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else
+            {
+              mb_tx_frame[len++] = mb_func_code;
+              const int coils = (quantity_of_coils + 31) / 32;
+              mb_tx_frame[len++] = coils;
+              for (int i = 0; i < coils; ++i)
+              {
+                for (int j = 0; j < 32; ++j)
+                {
+                  if (mb_coils_[starting_addr/32 + i] & (1 << ((starting_addr + i*32 + j) & 0xFFFFFFFF)))
+                    mb_tx_frame[len + i] |= (1 << j);
+                  else
+                    mb_tx_frame[len + i] &= ~(1 << j);
+                }
+              }
+              len += coils;
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 02 (0x02) Read Discrete Inputs
+          case 0x02:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_inputs = mb_pdata[2] << 8 | mb_pdata[3];
+            if (starting_addr > MB_DI_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else if (quantity_of_inputs == 0 || quantity_of_inputs + starting_addr > MB_DI_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else
+            {
+              mb_tx_frame[len++] = mb_func_code;
+              const int coils = (quantity_of_inputs + 31) / 32;
+              mb_tx_frame[len++] = coils;
+              for (int i = 0; i < coils; ++i)
+              {
+                for (int j = 0; j < 32; ++j)
+                {
+                  if (mb_discrete_inputs_[starting_addr/32 + i] & (1 << ((starting_addr + i*32 + j) & 0xFFFFFFFF)))
+                    mb_tx_frame[len + i] |= (1 << j);
+                  else
+                    mb_tx_frame[len + i] &= ~(1 << j);
+                }
+              }
+              len += coils;
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 03 (0x03) Read Holding Registers
+          case 0x03:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_reg = mb_pdata[2] << 8 | mb_pdata[3];
+            if (starting_addr > MB_HR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else if (quantity_of_reg == 0 || quantity_of_reg + starting_addr > MB_HR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else
+            {
+              mb_tx_frame[len++] = mb_func_code;
+              mb_tx_frame[len++] = quantity_of_reg * 2;
+              for (int i = 0; i < quantity_of_reg; ++i)
+              {
+                mb_tx_frame[len++] = mb_holding_regs_[starting_addr + i] >> 8;
+                mb_tx_frame[len++] = mb_holding_regs_[starting_addr + i] & 0xFF;
+              }
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 04 (0x04) Read Input Registers
+          case 0x04:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_reg = mb_pdata[2] << 8 | mb_pdata[3];
+            if (starting_addr > MB_IR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else if (quantity_of_reg == 0 || quantity_of_reg + starting_addr > MB_IR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else
+            {
+              mb_tx_frame[len++] = mb_func_code;
+              mb_tx_frame[len++] = quantity_of_reg * 2;
+              for (int i = 0; i < quantity_of_reg; ++i)
+              {
+                mb_tx_frame[len++] = mb_input_regs_[starting_addr + i] >> 8;
+                mb_tx_frame[len++] = mb_input_regs_[starting_addr + i] & 0xFF;
+              }
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 05 (0x05) Write Single Coil
+          case 0x05:
+          {
+            const uint16_t output_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t output_value = mb_pdata[2] << 8 | mb_pdata[3];
+            if (output_addr > MB_COILS_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else if (output_value == 0x0000 || output_value == 0xFF00)
+            {
+              memcpy(mb_tx_frame, mb_rx_frame, mb_length);
+              len = mb_length;
+              mb_coils_[output_addr] = output_value != 0 ? true : false;
+            }
+            else
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 06 (0x06) Write Single Register
+          case 0x06:
+          {
+            const uint16_t reg_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t reg_value = mb_pdata[2] << 8 | mb_pdata[3];
+            if (reg_addr > MB_HR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else
+            {
+              memcpy(mb_tx_frame, mb_rx_frame, mb_length);
+              len = mb_length;
+
+              mb_holding_regs_[reg_addr] = reg_value;
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 15 (0x0F) Write Multiple Coils
+          case 0x0F:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_coils = mb_pdata[2] << 8 | mb_pdata[3];
+            const uint8_t byte_count = mb_pdata[4];
+            if (quantity_of_coils == 0
+                || quantity_of_coils * 2 != byte_count
+                || byte_count != mb_length - 6)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else if (quantity_of_coils + starting_addr > MB_COILS_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else
+            {
+              memcpy(mb_tx_frame, mb_rx_frame, mb_length);
+              len = mb_length;
+
+              for (int i = 0; i < quantity_of_coils; ++i)
+              {
+                if (mb_pdata[5 + i / 32] & (1 << (starting_addr + (i & 0xFFFFFFFF))))
+                  mb_coils_[i + starting_addr] = true;
+                else
+                  mb_coils_[i + starting_addr] = false;
+              }
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          // 16 (0x10) Write Multiple registers
+          case 0x10:
+          {
+            const uint16_t starting_addr = mb_pdata[0] << 8 | mb_pdata[1];
+            const uint16_t quantity_of_regs = mb_pdata[2] << 8 | mb_pdata[3];
+            const uint8_t byte_count = mb_pdata[4];
+            if (quantity_of_regs == 0
+                || quantity_of_regs * 2 != byte_count
+                || byte_count != mb_length - 6)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
+            }
+            else if (quantity_of_regs + starting_addr > MB_HR_NUM)
+            {
+              mb_tx_frame[len++] = mb_func_code + 0x80;
+              mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_ADDRESS;
+            }
+            else
+            {
+              memcpy(mb_tx_frame, mb_rx_frame, mb_length);
+              len = mb_length;
+              for (int i = 0; i < quantity_of_regs; ++i)
+              {
+                mb_holding_regs_[starting_addr + i] = mb_pdata[i * 2 + 5] << 8 | mb_pdata[i * 2 + 6];
+              }
+            }
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+
+          default:
+          {
+            mb_tx_frame[len++] = mb_func_code + 0x80;
+            mb_tx_frame[len++] = MB_EC_ILLEGAL_FUNCTION;
+            mb_push_frame(mb_tx_frame, len);
+          }
+          break;
+        }
+      }
+    }
+
+    if (sw_emo != emo_prev)
     {
       // when change emo switch
       emo_change_ms = ms;
       state_emo_changed = state;
     }
-    emo_prev = emo;
+    emo_prev = sw_emo;
 
-    if (emo
+    if (sw_emo
         && state == STATE_EMO
         && state_emo_changed == STATE_EMO
         && ms - emo_change_ms >= EmoResetDuration)
@@ -266,143 +548,29 @@ int main(void)
       // reset emo state
       led_pattern = LedPatternNormal;
       state = STATE_NORMAL;
+      mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
+      mb_coils_[MB_COILS_OUTPUT] = true;
       pwm_set_rate(0, PWM_DIR_IDLE);
       pwm_enable_output();
     }
-    else if (emo && state_emo_changed != STATE_EMO)
+    else if (sw_emo && state_emo_changed != STATE_EMO)
     {
       led_pattern = LedPatternEmo;
       state = STATE_EMO;
+      mb_coils_[MB_COILS_OUTPUT] = false;
       pwm_disable_output();
-    }
-
-    while(usart2_gets(buf_cmd))
-    {
-      long cmd_id;
-      char* parse_point;
-      char* work_point;
-
-      // skip until leader character
-      if (*buf_cmd != '$')
-        continue;
-
-      // test check sum
-      if (nmea0183_check_sum(buf_cmd) == 0)
-        continue;
-
-      // check prefix
-      parse_point = buf_cmd;
-      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
-        continue;
-      if (strncmp(buf_word, NmeaPrefix, 7))
-        continue;
-
-      // read device id
-      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
-        continue;
-      work_point = buf_word;
-      if(xatoi(&work_point, &cmd_id) == 0)
-        continue;
-      if (cmd_id != 1)
-      {
-        // TODO
-        // transfer to follower device
-        continue;
-      }
-
-      // parse sub command
-      if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
-        continue;
-      if (strncmp(buf_word, "CMDSLT", 6) == 0)
-      {
-        // Set thlottle value command
-        // $SSPP03,id,CMDSLT,d,t*cc
-        // d : direction
-        //      1 : fwd
-        //      0 : idle
-        //      -1 : rev
-        // t : thlottle
-        //      0 to 65535
-        long dir = 0;
-        long thlottle = 0;
-        if (nmea0183_pop_word(buf_word, &parse_point, ',') == 0)
-          continue;
-        work_point = buf_word;
-        if(xatoi(&work_point, &dir) == 0)
-          continue;
-        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
-          continue;
-        work_point = buf_word;
-        if(xatoi(&work_point, &thlottle) == 0)
-          continue;
-        pwm_set_rate(thlottle, dir);
-      }
-      else if (strncmp(buf_word, "CMDCLT", 6) == 0)
-      {
-        // Set constant light value command
-        // $SSPP03,id,CMDCLT,r*cc
-        long rate = 0;
-        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
-          continue;
-        work_point = buf_word;
-        if(xatoi(&work_point, &rate) == 0)
-          continue;
-        pwm_set_constant_light_rate(rate);
-      }
-      else if (strncmp(buf_word, "CMDSIA", 6) == 0)
-      {
-        // Set superimpose amplitude value command
-        // $SSPP03,id,CMDSIA,a*cc
-        long amp = 0;
-        if (nmea0183_pop_word(buf_word, &parse_point, '*') == 0)
-          continue;
-        work_point = buf_word;
-        if(xatoi(&work_point, &amp) == 0)
-          continue;
-        pwm_set_superimpose_amplitude(amp);
-      }
-      else if (strncmp(buf_word, "CMDRST", 6) == 0)
-      {
-        // Reset emergency stop state
-        // $SSPP03,id,CMDRST*cc
-        if (state == STATE_EMO)
-        {
-          pwm_set_rate(0, PWM_DIR_IDLE);
-          pwm_enable_output();
-          led_pattern = LedPatternNormal;
-          state = STATE_NORMAL;
-        }
-      }
-      else if (strncmp(buf_word, "CMDEMO", 6) == 0)
-      {
-        // Enter to emergency stop state
-        pwm_disable_output();
-        led_pattern = LedPatternEmo;
-        state = STATE_EMO;
-      }
     }
 
     if (ms - sw_proc_ms_prev_ >= SwitchProcInterval)
     {
       sw_proc_ms_prev_ += SwitchProcInterval;
       bool s = sw_emo_is_pressed();
-      if (s == sw_emo_prev) emo = s;
+      if (s == sw_emo_prev) sw_emo = s;
       sw_emo_prev = s;
 
-      int m = sw_mode();
-      if (m == sw_mode_prev) mode = m;
+      int m = sw_mode_state();
+      if (m == sw_mode_prev) sw_mode = m;
       sw_mode_prev = m;
-    }
-
-    if (ms - report_ms_prev_ >= report_interval_ms_)
-    {
-      report_ms_prev_ += report_interval_ms_;
-      rep_offset = 0;
-      xsprintf(buf_rep, "%s,1,REPPWR,%d,%d,%d,%d*", NmeaPrefix, vm_mv, vm_mv_peak, cur_ma, cur_ma_peak);
-      rep_offset += nmea0183_add_suffix(buf_rep);
-      xsprintf(buf_rep+rep_offset, "%s,1,REPSTA,%d,%d,%d*", NmeaPrefix, emo ? 1 : 0, mode, state);
-      rep_offset += nmea0183_add_suffix(buf_rep+rep_offset);
-      usart2_puts(buf_rep);
     }
 
     if (ms - led_proc_ms_prev_ >= LedProcInterval)

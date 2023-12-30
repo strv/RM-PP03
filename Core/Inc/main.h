@@ -73,8 +73,10 @@ void adc_update_reserve();
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define PWM_CYCLE (SYSCLOCK / PWM_HZ - 1)
+#define SYSCLOCK (64*1000*1000)
 #define PWM_HZ (100000)
-#define PWM_CYCLE (64*1000*1000 / PWM_HZ - 1)
+#define MODBUS_BAUD 115200
 
 /* USER CODE BEGIN Private defines */
 

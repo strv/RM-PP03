@@ -234,6 +234,11 @@ void USART2_IRQHandler(void)
   /* USER CODE BEGIN USART2_IRQn 0 */
   if (LL_USART_IsActiveFlag_RXNE(USART2))
     usart2_rx_cb(USART2);
+  if (LL_USART_IsActiveFlag_ORE(USART2))
+  {
+    usart2_rx_ore_cb();
+    LL_USART_ClearFlag_ORE(USART2);
+  }
   /* USER CODE END USART2_IRQn 0 */
   /* USER CODE BEGIN USART2_IRQn 1 */
 
