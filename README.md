@@ -86,7 +86,7 @@ STRV's Studio RM-PP03用ファームウェア
 
 ## 接続方法
 
-![RM-PP03s](docs/image/RM-PP03s_connections.png)
+![RM-PP03s](doc/image/RM-PP03s_connections.png)
 
 ### 電源
 
