@@ -93,7 +93,7 @@ typedef enum
   MB_COILS_EMERGENCY_MODE,
   MB_COILS_NUM
 } MB_COILS;
-static bool mb_coils_[MB_COILS_NUM] = {0};
+static bool mb_coils_[MB_COILS_NUM] = {false};
 /*
 Modbus Discrete inputs
 Addr  : Assign
@@ -106,7 +106,7 @@ typedef enum
   MB_DI_SW_MODE,
   MB_DI_NUM
 } MB_DISCRETE_INPUTS;
-static uint16_t mb_discrete_inputs_[MB_DI_NUM] = {0};
+static bool mb_discrete_inputs_[MB_DI_NUM] = {false};
 /*
 Modbus Holding Registers
 Addr  : Assign
@@ -258,8 +258,8 @@ int main(void)
       mb_input_regs_[MB_IR_CUR_AVE] = adc_get_cur();
       mb_input_regs_[MB_IR_CUR_PEAK] = adc_get_cur_peak();
     }
-    mb_discrete_inputs_[0]  = (sw_emo   ? (1 << 0) : 0)
-                            | (sw_mode  ? (1 << 1) : 0);
+    mb_discrete_inputs_[MB_DI_SW_EMO]  = sw_emo;
+    mb_discrete_inputs_[MB_DI_SW_MODE] = sw_mode;
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -297,19 +297,22 @@ int main(void)
             else
             {
               mb_tx_frame[len++] = mb_func_code;
-              const int coils = (quantity_of_coils + 31) / 32;
-              mb_tx_frame[len++] = coils;
-              for (int i = 0; i < coils; ++i)
+              const int byte_count = (quantity_of_coils + 7) / 8;
+              mb_tx_frame[len++] = byte_count;
+              for (int i = 0; i < byte_count; ++i)
               {
-                for (int j = 0; j < 32; ++j)
+                for (int j = 0; j < 8; ++j)
                 {
-                  if (mb_coils_[starting_addr/32 + i] & (1 << ((starting_addr + i*32 + j) & 0xFFFFFFFF)))
+                  const int idx = starting_addr + i*8 + j;
+                  if (idx == MB_COILS_NUM)
+                    break;
+                  if (mb_coils_[idx])
                     mb_tx_frame[len + i] |= (1 << j);
                   else
                     mb_tx_frame[len + i] &= ~(1 << j);
                 }
               }
-              len += coils;
+              len += byte_count;
             }
             mb_push_frame(mb_tx_frame, len);
           }
@@ -333,19 +336,22 @@ int main(void)
             else
             {
               mb_tx_frame[len++] = mb_func_code;
-              const int coils = (quantity_of_inputs + 31) / 32;
-              mb_tx_frame[len++] = coils;
-              for (int i = 0; i < coils; ++i)
+              const int byte_count = (quantity_of_inputs + 7) / 8;
+              mb_tx_frame[len++] = byte_count;
+              for (int i = 0; i < byte_count; ++i)
               {
-                for (int j = 0; j < 32; ++j)
+                for (int j = 0; j < 8; ++j)
                 {
-                  if (mb_discrete_inputs_[starting_addr/32 + i] & (1 << ((starting_addr + i*32 + j) & 0xFFFFFFFF)))
+                  const int idx = starting_addr + i*8 + j;
+                  if (idx == MB_DI_NUM)
+                    break;
+                  if (mb_discrete_inputs_[idx])
                     mb_tx_frame[len + i] |= (1 << j);
                   else
                     mb_tx_frame[len + i] &= ~(1 << j);
                 }
               }
-              len += coils;
+              len += byte_count;
             }
             mb_push_frame(mb_tx_frame, len);
           }
