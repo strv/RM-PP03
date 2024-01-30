@@ -556,11 +556,14 @@ int main(void)
       state = STATE_NORMAL;
       mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
       mb_coils_[MB_COILS_OUTPUT] = true;
+      mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
       pwm_set_rate(0, PWM_DIR_IDLE);
       pwm_enable_output();
     }
-    else if (sw_emo && state_emo_changed != STATE_EMO)
+    else if (mb_coils_[MB_COILS_EMERGENCY_MODE]
+            || (sw_emo && state_emo_changed != STATE_EMO))
     {
+      // enter to emo state
       led_pattern = LedPatternEmo;
       state = STATE_EMO;
       mb_coils_[MB_COILS_OUTPUT] = false;
