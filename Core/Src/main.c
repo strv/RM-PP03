@@ -217,6 +217,15 @@ void init_boot_config()
     SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
   }
 }
+
+void update_pwm_settings()
+{
+  PWM_DIR dir = mb_holding_regs_[MB_HR_OUTPUT_RATE] & 0x8000 ? PWM_DIR_REV : PWM_DIR_FWD;
+  pwm_set_rate((mb_holding_regs_[MB_HR_OUTPUT_RATE] & 0x7FFFF) * 2, dir);
+  pwm_set_constant_light_rate(mb_holding_regs_[MB_HR_CL_RATE]);
+  pwm_set_superimpose_amplitude(mb_holding_regs_[MB_HR_SI_RATE]);
+  pwm_set_superimpose_freq(mb_holding_regs_[MB_HR_SI_FREQ]);
+}
 /* USER CODE END 0 */
 
 /**
@@ -277,10 +286,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  pwm_set_rate(0, PWM_DIR_IDLE);
-  pwm_set_constant_light_rate(0);
-  pwm_set_superimpose_amplitude(65535/5);
-  pwm_set_superimpose_freq(50);
+  update_pwm_settings();
 
   led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
@@ -574,6 +580,15 @@ int main(void)
           }
           break;
         }
+        if (mb_coils_[MB_COILS_OUTPUT])
+        {
+          update_pwm_settings();
+          pwm_enable_output();
+        }
+        else
+        {
+          pwm_disable_output();
+        }
       }
     }
 
@@ -596,7 +611,7 @@ int main(void)
       mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
       mb_coils_[MB_COILS_OUTPUT] = true;
       mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
-      pwm_set_rate(0, PWM_DIR_IDLE);
+      update_pwm_settings();
       pwm_enable_output();
     }
     else if (mb_coils_[MB_COILS_EMERGENCY_MODE]
