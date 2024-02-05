@@ -110,18 +110,27 @@ static bool mb_discrete_inputs_[MB_DI_NUM] = {false};
 /*
 Modbus Holding Registers
 Addr  : Assign
-40001 : Output rate -32768 to 32767
+40001 : Output rate
+          bit 0-14  : rate 0 to 32767
+          bit 15    : direction 0 : Foward / 1 : Reverse
 40002 : Constant light rate 0 to 65535
-40003 : Superimpose amplitude rate 0 to 65535
+40003 : Superimpose amplitude rate 0 to 65535. default 65535/5
+40004 : Superimpose frequency 0 to 1000 is beter. default 50
 */
 typedef enum
 {
   MB_HR_OUTPUT_RATE = 0,
   MB_HR_CL_RATE,
   MB_HR_SI_RATE,
+  MB_HR_SI_FREQ,
   MB_HR_NUM
 } MB_HOLDING_REGISTERS;
-static uint16_t mb_holding_regs_[MB_HR_NUM] = {0};
+static uint16_t mb_holding_regs_[MB_HR_NUM] = {
+  0,
+  0,
+  65535/5,
+  50
+};
 /*
 Modbus Input Registers
 Addr  : Assign
