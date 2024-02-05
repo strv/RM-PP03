@@ -498,8 +498,8 @@ int main(void)
             const uint16_t quantity_of_coils = mb_pdata[2] << 8 | mb_pdata[3];
             const uint8_t byte_count = mb_pdata[4];
             if (quantity_of_coils == 0
-                || quantity_of_coils * 2 != byte_count
-                || byte_count != mb_length - 6)
+                || (quantity_of_coils + 7) / 8 != byte_count
+                || byte_count != mb_length - (2+5+2))
             {
               mb_tx_frame[len++] = mb_func_code + 0x80;
               mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
@@ -516,7 +516,7 @@ int main(void)
 
               for (int i = 0; i < quantity_of_coils; ++i)
               {
-                if (mb_pdata[5 + i / 32] & (1 << (starting_addr + (i & 0xFFFFFFFF))))
+                if (mb_pdata[5 + i / 8] & (1 << ((starting_addr + i)%8)))
                   mb_coils_[i + starting_addr] = true;
                 else
                   mb_coils_[i + starting_addr] = false;
@@ -534,7 +534,7 @@ int main(void)
             const uint8_t byte_count = mb_pdata[4];
             if (quantity_of_regs == 0
                 || quantity_of_regs * 2 != byte_count
-                || byte_count != mb_length - 6)
+                || byte_count != mb_length - (2+5+2))
             {
               mb_tx_frame[len++] = mb_func_code + 0x80;
               mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
