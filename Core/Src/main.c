@@ -179,6 +179,35 @@ void adc_update_reserve()
 {
   adc_update_ = true;
 }
+
+void init_boot_config()
+{
+  if (FLASH->OPTR & (FLASH_OPTR_nBOOT_SEL_Msk))
+  {
+    // Unlock FLASH programing
+    WRITE_REG(FLASH->KEYR, 0x45670123);
+    WRITE_REG(FLASH->KEYR, 0xCDEF89AB);
+
+    // Unlock FLASH option programing
+    WRITE_REG(FLASH->OPTKEYR, 0x08192A3B);
+    WRITE_REG(FLASH->OPTKEYR, 0x4C5D6E7F);
+
+    // Enable BOOT0 pin
+    CLEAR_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT_SEL);
+
+    // Check no FLASH operation
+    while (FLASH->SR & FLASH_SR_BSY1_Msk);
+
+    // FLASH program start
+    SET_BIT(FLASH->CR, FLASH_CR_OPTSTRT);
+
+    // Wait program done
+    while (FLASH->SR & FLASH_SR_BSY1_Msk);
+
+    // Load to register
+    SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -211,6 +240,7 @@ int main(void)
   NVIC_SetPriority(SysTick_IRQn, 3);
 
   /* USER CODE BEGIN Init */
+  init_boot_config();
 
   /* USER CODE END Init */
 
