@@ -531,7 +531,7 @@ int main(void)
 
               for (int i = 0; i < quantity_of_coils; ++i)
               {
-                if (mb_pdata[5 + i / 8] & (1 << ((starting_addr + i)%8)))
+                if (mb_pdata[5 + i / 8] & (1 << (i%8)))
                   mb_coils_[i + starting_addr] = true;
                 else
                   mb_coils_[i + starting_addr] = false;
