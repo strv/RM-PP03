@@ -61,7 +61,8 @@ const static uint32_t EmoResetDuration = 5000;
 const static uint32_t LedProcInterval = 125;
 const static int LedPhaseMax = 8;
 const static bool LedPatternStartup[] = {false, false, false, false, false, false, false, false};
-const static bool LedPatternNormal[] = {false, false, false, false, true, true, true, true};
+const static bool LedPatternDisabled[] = {false, false, false, false, false, true, false, true};
+const static bool LedPatternEnabled[] = {false, false, false, false, true, true, true, true};
 const static bool LedPatternEmo[] = {false, true, false, true, false, true, false, true};
 /* USER CODE END PD */
 
@@ -289,7 +290,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   update_pwm_settings();
 
-  led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
   sw_proc_ms_prev_ = ms;
   led_proc_ms_prev_ = ms;
@@ -581,52 +581,55 @@ int main(void)
           }
           break;
         }
-        if (mb_coils_[MB_COILS_OUTPUT])
-        {
-          update_pwm_settings();
-          pwm_enable_output();
-        }
-        else
-        {
-          pwm_disable_output();
-        }
       }
     }
 
-    if (sw_emo != emo_prev)
+    if (mb_coils_[MB_COILS_OUTPUT])
     {
-      // when change emo switch
-      emo_change_ms = ms;
-      state_emo_changed = state;
-    }
-    emo_prev = sw_emo;
+      if (sw_emo != emo_prev)
+      {
+        // when change emo switch
+        emo_change_ms = ms;
+        state_emo_changed = state;
+      }
+      emo_prev = sw_emo;
 
-    if ( (mb_coils_[MB_COILS_EMERGENCY_MODE] && !mb_emo_prev)
-      || (sw_emo && state_emo_changed != STATE_EMO))
+      if ( (mb_coils_[MB_COILS_EMERGENCY_MODE] && !mb_emo_prev)
+        || (sw_emo && state_emo_changed != STATE_EMO))
+      {
+        // enter to emo state
+        led_pattern = LedPatternEmo;
+        state = STATE_EMO;
+        mb_coils_[MB_COILS_EMERGENCY_MODE] = true;
+        pwm_disable_output();
+      }
+      else if ( (!mb_coils_[MB_COILS_EMERGENCY_MODE] && mb_emo_prev)
+          || (sw_emo
+          && state == STATE_EMO
+          && state_emo_changed == STATE_EMO
+          && ms - emo_change_ms >= EmoResetDuration))
+      {
+        // reset emo state
+        led_pattern = LedPatternEnabled;
+        state = STATE_NORMAL;
+        mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
+        mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
+        update_pwm_settings();
+        pwm_enable_output();
+      }
+      else if (state == STATE_NORMAL)
+      {
+        led_pattern = LedPatternEnabled;
+        update_pwm_settings();
+        pwm_enable_output();
+      }
+      mb_emo_prev = mb_coils_[MB_COILS_EMERGENCY_MODE];
+    }
+    else
     {
-      // enter to emo state
-      led_pattern = LedPatternEmo;
-      state = STATE_EMO;
-      mb_coils_[MB_COILS_OUTPUT] = false;
-      mb_coils_[MB_COILS_EMERGENCY_MODE] = true;
+      led_pattern = LedPatternDisabled;
       pwm_disable_output();
     }
-    else if ( (!mb_coils_[MB_COILS_EMERGENCY_MODE] && mb_emo_prev)
-        || (sw_emo
-        && state == STATE_EMO
-        && state_emo_changed == STATE_EMO
-        && ms - emo_change_ms >= EmoResetDuration))
-    {
-      // reset emo state
-      led_pattern = LedPatternNormal;
-      state = STATE_NORMAL;
-      mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
-      mb_coils_[MB_COILS_OUTPUT] = true;
-      mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
-      update_pwm_settings();
-      pwm_enable_output();
-    }
-    mb_emo_prev = mb_coils_[MB_COILS_EMERGENCY_MODE];
 
     if (ms - sw_proc_ms_prev_ >= SwitchProcInterval)
     {
