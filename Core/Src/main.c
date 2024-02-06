@@ -61,7 +61,8 @@ const static uint32_t EmoResetDuration = 5000;
 const static uint32_t LedProcInterval = 125;
 const static int LedPhaseMax = 8;
 const static bool LedPatternStartup[] = {false, false, false, false, false, false, false, false};
-const static bool LedPatternNormal[] = {false, false, false, false, true, true, true, true};
+const static bool LedPatternDisabled[] = {false, false, false, false, false, true, false, true};
+const static bool LedPatternEnabled[] = {false, false, false, false, true, true, true, true};
 const static bool LedPatternEmo[] = {false, true, false, true, false, true, false, true};
 /* USER CODE END PD */
 
@@ -110,18 +111,27 @@ static bool mb_discrete_inputs_[MB_DI_NUM] = {false};
 /*
 Modbus Holding Registers
 Addr  : Assign
-40001 : Output rate -32768 to 32767
+40001 : Output rate
+          bit 0-14  : rate 0 to 32767
+          bit 15    : direction 0 : Foward / 1 : Reverse
 40002 : Constant light rate 0 to 65535
-40003 : Superimpose amplitude rate 0 to 65535
+40003 : Superimpose amplitude rate 0 to 65535. default 65535/5
+40004 : Superimpose frequency 0 to 1000 is beter. default 50
 */
 typedef enum
 {
   MB_HR_OUTPUT_RATE = 0,
   MB_HR_CL_RATE,
   MB_HR_SI_RATE,
+  MB_HR_SI_FREQ,
   MB_HR_NUM
 } MB_HOLDING_REGISTERS;
-static uint16_t mb_holding_regs_[MB_HR_NUM] = {0};
+static uint16_t mb_holding_regs_[MB_HR_NUM] = {
+  0,
+  0,
+  65535/5,
+  50
+};
 /*
 Modbus Input Registers
 Addr  : Assign
@@ -208,6 +218,15 @@ void init_boot_config()
     SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
   }
 }
+
+void update_pwm_settings()
+{
+  PWM_DIR dir = mb_holding_regs_[MB_HR_OUTPUT_RATE] & 0x8000 ? PWM_DIR_REV : PWM_DIR_FWD;
+  pwm_set_rate((mb_holding_regs_[MB_HR_OUTPUT_RATE] & 0x7FFFF) * 2, dir);
+  pwm_set_constant_light_rate(mb_holding_regs_[MB_HR_CL_RATE]);
+  pwm_set_superimpose_amplitude(mb_holding_regs_[MB_HR_SI_RATE]);
+  pwm_set_superimpose_freq(mb_holding_regs_[MB_HR_SI_FREQ]);
+}
 /* USER CODE END 0 */
 
 /**
@@ -224,6 +243,7 @@ int main(void)
   int sw_mode_prev = 0;
   bool sw_emo = false;
   bool emo_prev = false;
+  bool mb_emo_prev = false;
   uint32_t emo_change_ms = 0;
   STATE state_emo_changed = state;
   bool sw_emo_prev = false;
@@ -268,12 +288,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  pwm_set_rate(0, PWM_DIR_IDLE);
-  pwm_set_constant_light_rate(0);
-  pwm_set_superimpose_amplitude(65535/5);
-  pwm_set_superimpose_freq(50);
+  update_pwm_settings();
 
-  led_pattern = LedPatternNormal;
   state = STATE_NORMAL;
   sw_proc_ms_prev_ = ms;
   led_proc_ms_prev_ = ms;
@@ -498,8 +514,8 @@ int main(void)
             const uint16_t quantity_of_coils = mb_pdata[2] << 8 | mb_pdata[3];
             const uint8_t byte_count = mb_pdata[4];
             if (quantity_of_coils == 0
-                || quantity_of_coils * 2 != byte_count
-                || byte_count != mb_length - 6)
+                || (quantity_of_coils + 7) / 8 != byte_count
+                || byte_count != mb_length - (2+5+2))
             {
               mb_tx_frame[len++] = mb_func_code + 0x80;
               mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
@@ -516,7 +532,7 @@ int main(void)
 
               for (int i = 0; i < quantity_of_coils; ++i)
               {
-                if (mb_pdata[5 + i / 32] & (1 << (starting_addr + (i & 0xFFFFFFFF))))
+                if (mb_pdata[5 + i / 8] & (1 << (i%8)))
                   mb_coils_[i + starting_addr] = true;
                 else
                   mb_coils_[i + starting_addr] = false;
@@ -534,7 +550,7 @@ int main(void)
             const uint8_t byte_count = mb_pdata[4];
             if (quantity_of_regs == 0
                 || quantity_of_regs * 2 != byte_count
-                || byte_count != mb_length - 6)
+                || byte_count != mb_length - (2+5+2))
             {
               mb_tx_frame[len++] = mb_func_code + 0x80;
               mb_tx_frame[len++] = MB_EC_ILLEGAL_DATA_VALUE;
@@ -568,35 +584,50 @@ int main(void)
       }
     }
 
-    if (sw_emo != emo_prev)
+    if (mb_coils_[MB_COILS_OUTPUT])
     {
-      // when change emo switch
-      emo_change_ms = ms;
-      state_emo_changed = state;
-    }
-    emo_prev = sw_emo;
+      if (sw_emo != emo_prev)
+      {
+        // when change emo switch
+        emo_change_ms = ms;
+        state_emo_changed = state;
+      }
+      emo_prev = sw_emo;
 
-    if (sw_emo
-        && state == STATE_EMO
-        && state_emo_changed == STATE_EMO
-        && ms - emo_change_ms >= EmoResetDuration)
-    {
-      // reset emo state
-      led_pattern = LedPatternNormal;
-      state = STATE_NORMAL;
-      mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
-      mb_coils_[MB_COILS_OUTPUT] = true;
-      mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
-      pwm_set_rate(0, PWM_DIR_IDLE);
-      pwm_enable_output();
+      if ( (mb_coils_[MB_COILS_EMERGENCY_MODE] && !mb_emo_prev)
+        || (sw_emo && state_emo_changed != STATE_EMO))
+      {
+        // enter to emo state
+        led_pattern = LedPatternEmo;
+        state = STATE_EMO;
+        mb_coils_[MB_COILS_EMERGENCY_MODE] = true;
+        pwm_disable_output();
+      }
+      else if ( (!mb_coils_[MB_COILS_EMERGENCY_MODE] && mb_emo_prev)
+          || (sw_emo
+          && state == STATE_EMO
+          && state_emo_changed == STATE_EMO
+          && ms - emo_change_ms >= EmoResetDuration))
+      {
+        // reset emo state
+        led_pattern = LedPatternEnabled;
+        state = STATE_NORMAL;
+        mb_holding_regs_[MB_HR_OUTPUT_RATE] = 0;
+        mb_coils_[MB_COILS_EMERGENCY_MODE] = false;
+        update_pwm_settings();
+        pwm_enable_output();
+      }
+      else if (state == STATE_NORMAL)
+      {
+        led_pattern = LedPatternEnabled;
+        update_pwm_settings();
+        pwm_enable_output();
+      }
+      mb_emo_prev = mb_coils_[MB_COILS_EMERGENCY_MODE];
     }
-    else if (mb_coils_[MB_COILS_EMERGENCY_MODE]
-            || (sw_emo && state_emo_changed != STATE_EMO))
+    else
     {
-      // enter to emo state
-      led_pattern = LedPatternEmo;
-      state = STATE_EMO;
-      mb_coils_[MB_COILS_OUTPUT] = false;
+      led_pattern = LedPatternDisabled;
       pwm_disable_output();
     }
 
