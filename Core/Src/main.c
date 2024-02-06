@@ -242,6 +242,7 @@ int main(void)
   int sw_mode_prev = 0;
   bool sw_emo = false;
   bool emo_prev = false;
+  bool mb_emo_prev = false;
   uint32_t emo_change_ms = 0;
   STATE state_emo_changed = state;
   bool sw_emo_prev = false;
@@ -600,10 +601,21 @@ int main(void)
     }
     emo_prev = sw_emo;
 
-    if (sw_emo
+    if ( (mb_coils_[MB_COILS_EMERGENCY_MODE] && !mb_emo_prev)
+      || (sw_emo && state_emo_changed != STATE_EMO))
+    {
+      // enter to emo state
+      led_pattern = LedPatternEmo;
+      state = STATE_EMO;
+      mb_coils_[MB_COILS_OUTPUT] = false;
+      mb_coils_[MB_COILS_EMERGENCY_MODE] = true;
+      pwm_disable_output();
+    }
+    else if ( (!mb_coils_[MB_COILS_EMERGENCY_MODE] && mb_emo_prev)
+        || (sw_emo
         && state == STATE_EMO
         && state_emo_changed == STATE_EMO
-        && ms - emo_change_ms >= EmoResetDuration)
+        && ms - emo_change_ms >= EmoResetDuration))
     {
       // reset emo state
       led_pattern = LedPatternNormal;
@@ -614,15 +626,7 @@ int main(void)
       update_pwm_settings();
       pwm_enable_output();
     }
-    else if (mb_coils_[MB_COILS_EMERGENCY_MODE]
-            || (sw_emo && state_emo_changed != STATE_EMO))
-    {
-      // enter to emo state
-      led_pattern = LedPatternEmo;
-      state = STATE_EMO;
-      mb_coils_[MB_COILS_OUTPUT] = false;
-      pwm_disable_output();
-    }
+    mb_emo_prev = mb_coils_[MB_COILS_EMERGENCY_MODE];
 
     if (ms - sw_proc_ms_prev_ >= SwitchProcInterval)
     {
