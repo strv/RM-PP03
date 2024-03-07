@@ -56,6 +56,7 @@ typedef enum
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+const static uint32_t ModbusTimeout = 1000;
 const static uint32_t SwitchProcInterval = 10;
 const static uint32_t EmoResetDuration = 5000;
 const static uint32_t LedProcInterval = 125;
@@ -75,6 +76,7 @@ const static bool LedPatternEmo[] = {false, true, false, true, false, true, fals
 
 /* USER CODE BEGIN PV */
 uint32_t ms = 0;
+static uint32_t last_mb_ms_ = 0;
 static uint32_t sw_proc_ms_prev_ = 0;
 static uint32_t led_proc_ms_prev_ = 0;
 static int led_phase_ = 0;
@@ -582,6 +584,7 @@ int main(void)
           break;
         }
       }
+      last_mb_ms_ = ms;
     }
 
     if (mb_coils_[MB_COILS_OUTPUT])
@@ -595,7 +598,8 @@ int main(void)
       emo_prev = sw_emo;
 
       if ( (mb_coils_[MB_COILS_EMERGENCY_MODE] && !mb_emo_prev)
-        || (sw_emo && state_emo_changed != STATE_EMO))
+        || (sw_emo && state_emo_changed != STATE_EMO)
+        || (ms - last_mb_ms_ > ModbusTimeout))
       {
         // enter to emo state
         led_pattern = LedPatternEmo;
